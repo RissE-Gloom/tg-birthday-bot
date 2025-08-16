@@ -1,81 +1,86 @@
 const { Telegraf } = require('telegraf');
-const { Low } = require('lowdb');
-const { JSONFile } = require('lowdb/node');
-const { scheduleJob } = require('node-schedule');
+const { createClient } = require('@supabase/supabase-js');
 const { DateTime } = require('luxon');
 
-// Инициализация базы данных
-const adapter = new JSONFile('db.json');
-const db = new Low(adapter, { users: [] });
+// Инициализация Supabase
+const supabase = createClient(
+  'https://wttruqdkpbxhoylacjuv.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0dHJ1cWRrcGJ4aG95bGFjanV2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUwNDA4OTAsImV4cCI6MjA3MDYxNjg5MH0.AnygEr0ZY-GFtjf8FSbvQpKptXenYKbPfNp1OFnzYE8'
+);
 
 const bot = new Telegraf('476971889:AAHqIoP0f3hTF7K79JD4_VON8to_awhu9_g');
 
-// Настройка временной зоны (Москва)
-const TIMEZONE = 'Europe/Moscow';
-
-// Функция проверки дней рождения
-async function checkBirthdays() {
-  const now = DateTime.now().setZone(TIMEZONE);
+// Функция для проверки дат и отправки уведомлений
+async function checkUpcomingBirthdays() {
+  const now = DateTime.now().setZone('Europe/Moscow');
   const today = now.toFormat('dd.MM');
+  const in7Days = now.plus({ days: 7 }).toFormat('dd.MM');
 
-  await db.read();
-  
-  db.data.users.forEach(user => {
-    if (user.birthDate === today) {
-      bot.telegram.sendMessage(
-        user.id,
-        `🎉 ${user.name}, сегодня твой день! 🎂\nДата рождения: ${user.birthDate}`
+  // Получаем всех пользователей
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('*');
+
+  if (error) {
+    console.error('Ошибка Supabase:', error);
+    return;
+  }
+
+  // Проверяем каждую запись
+  for (const user of users) {
+    // Если сегодня день рождения
+    if (user.birth_date === today) {
+      await bot.telegram.sendMessage(
+        user.telegram_id,
+        `🎉 ${user.name}, сегодня твой день рождения! 🎂`
       );
     }
-  });
+    // Если до дня рождения 7 дней
+    else if (user.birth_date === in7Days) {
+      await bot.telegram.sendMessage(
+        user.telegram_id,
+        `⏳ ${user.name}, через неделю (${user.birth_date}) будет твой день рождения!`
+      );
+    }
+  }
 }
 
-// Обработчик команды /start
-bot.start((ctx) => {
-  ctx.reply('Привет! Отправь дату рождения в формате ДД.ММ (например, 31.12)');
-});
+// Проверка каждые 24 часа
+setInterval(checkUpcomingBirthdays, 24 * 60 * 60 * 1000);
 
-// Обработчик текстовых сообщений
+// Обработчик сообщений
 bot.on('text', async (ctx) => {
-  try {
-    const userId = ctx.from.id;
-    const userName = ctx.from.first_name || 'Пользователь';
-    const birthDate = ctx.message.text.trim();
+  const { id, first_name } = ctx.from;
+  const inputDate = ctx.message.text.trim();
 
-    // Проверка формата даты
-    if (!/^\d{2}\.\d{2}$/.test(birthDate)) {
-      return ctx.reply('❌ Неверный формат! Используй ДД.ММ (например, 31.12)');
-    }
+  // Нормализация даты (поддержка разных форматов)
+  const normalizedDate = inputDate
+    .replace(/\D/g, '') // Удаляем все нецифровые символы
+    .replace(/^(\d{1,2})(\d{2})$/, '$1.$2'); // Форматируем в ДД.ММ
 
-    // Сохранение данных
-    await db.read();
-    
-    const userIndex = db.data.users.findIndex(u => u.id === userId);
-    if (userIndex >= 0) {
-      db.data.users[userIndex].birthDate = birthDate;
-    } else {
-      db.data.users.push({ id: userId, name: userName, birthDate });
-    }
-
-    await db.write();
-    ctx.reply(`✅ Дата ${birthDate} сохранена! Уведомлю, когда наступит этот день!`);
-  } catch (error) {
-    console.error('Ошибка:', error);
-    ctx.reply('❌ Ошибка при сохранении данных.');
+  if (!/^\d{2}\.\d{2}$/.test(normalizedDate)) {
+    return ctx.reply('❌ Неверный формат! Используй ДД.ММ (например, 31.12)');
   }
+
+  // Сохранение в Supabase
+  const { error } = await supabase
+    .from('users')
+    .upsert({ 
+      telegram_id: id, 
+      name: first_name || 'Пользователь', 
+      birth_date: normalizedDate 
+    });
+
+  if (error) {
+    console.error(error);
+    return ctx.reply('❌ Ошибка сохранения данных.');
+  }
+
+  ctx.reply(`✅ Дата "${normalizedDate}" сохранена! Я напомню за неделю и в день события.`);
 });
 
-// Планировщик (проверка каждый день в 09:00 по Москве)
-scheduleJob('0 9 * * *', () => {
-  console.log('Проверяем дни рождения...');
-  checkBirthdays();
-});
+// Первая проверка при запуске
+checkUpcomingBirthdays();
 
-// Запуск бота
-bot.launch()
-  .then(() => {
-    console.log('Бот запущен!');
-    // Первая проверка при старте
-    checkBirthdays(); 
-  })
-  .catch(err => console.error('Ошибка запуска:', err));
+bot.launch();
+console.log('Бот запущен и мониторит дни рождения...');
