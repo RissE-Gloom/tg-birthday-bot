@@ -17,7 +17,7 @@
     "nodemon": "^3.0.2"
   },
   "engines": {
-    "node": "18.x"
+    "node": "20.x"
   },
   "keywords": [
     "telegram",
@@ -27,4 +27,5 @@
   ],
   "author": "RissE",
   "license": "MIT"
+
 }
