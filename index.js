@@ -278,9 +278,9 @@ async function start() {
 // ДОБАВЬ ВНЕШНИЕ ПИНГИ чтобы Koyeb не засыпал
 const https = require('https');
 setInterval(() => {
-  https.get('https://www.google.com', () => {
-    console.log('🐦 Keep-alive ping sent');
-  });
+  http.get('http://localhost:8000/health', () => {
+  console.log('✅ Koyeb видит этот трафик!');
+});
 }, 2 * 60 * 1000);
 
 // Обработка ошибок
@@ -297,6 +297,7 @@ start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
 });
+
 
 
 
