@@ -267,13 +267,43 @@ async function checkBirthdays() {
 // Запуск бота
 async function start() {
   await checkTableStructure();
-  
-  // Проверка при старте и каждые 24 часа
   await checkBirthdays();
   setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
 
-  bot.launch();
-  console.log('✅ Бот успешно запущен');
+  // Webhook вместо polling
+  const webhookUrl = `https://${process.env.KOYEB_APP_NAME}.koyeb.app/webhook`;
+  await bot.telegram.setWebhook(webhookUrl);
+  console.log('✅ Webhook установлен:', webhookUrl);
+
+  // Обработка webhook запросов
+  server.on('request', async (req, res) => {
+    if (req.url === '/health' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'OK' }));
+      return;
+    }
+
+    if (req.url === '/webhook' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        try {
+          const update = JSON.parse(body);
+          await bot.handleUpdate(update);
+          res.writeHead(200);
+          res.end();
+        } catch (error) {
+          console.error('Webhook error:', error);
+          res.writeHead(500);
+          res.end();
+        }
+      });
+      return;
+    }
+
+    res.writeHead(404);
+    res.end();
+  });
 }
 
 // Обработка ошибок
@@ -290,5 +320,6 @@ start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
 });
+
 
 
