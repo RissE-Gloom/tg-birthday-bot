@@ -270,17 +270,26 @@ async function start() {
   await checkBirthdays();
   setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
 
-  await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-  console.log('✅ Polling отключен');
+  // Убедись что Webhook отключен
+  try {
+    await bot.telegram.deleteWebhook();
+    console.log('✅ Старый webhook удален');
+  } catch (error) {
+    console.log('ℹ️ Не было активного webhook');
+  }
 
-  // Webhook вместо polling
+  // Установи новый Webhook
   const webhookUrl = `https://${process.env.KOYEB_APP_NAME}.koyeb.app/webhook`;
-  await bot.telegram.setWebhook(webhookUrl);
+  await bot.telegram.setWebhook(webhookUrl, {
+    drop_pending_updates: true,
+    allowed_updates: ['message', 'callback_query']
+  });
+  
   console.log('✅ Webhook установлен:', webhookUrl);
 
-  // Обработка webhook запросов
+  // HTTP обработчик
   server.on('request', async (req, res) => {
-    if (req.url === '/health' && req.method === 'GET') {
+    if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'OK' }));
       return;
@@ -323,6 +332,7 @@ start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
 });
+
 
 
 
