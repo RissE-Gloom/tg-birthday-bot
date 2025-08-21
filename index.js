@@ -3,38 +3,6 @@ const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 const { DateTime } = require('luxon');
 const http = require('http');
-const express = require('express'); // ДОБАВИЛ EXPRESS
-
-const app = express(); // ДОБАВИЛ EXPRESS APP
-const PORT = 8000;
-
-// ██████████████████████████████████████████████████
-// ДОБАВИЛ ЖЕСТКИЙ KEEP-ALIVE ДЛЯ KOYEB
-// ██████████████████████████████████████████████████
-
-// Express endpoints для Koyeb
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', time: new Date().toISOString() });
-});
-
-app.get('/koyeb-ping', (req, res) => {
-  console.log('✅ Koyeb видит этот трафик!');
-  res.json({ ping: 'pong', timestamp: new Date().toISOString() });
-});
-
-// Жесткие пинги каждые 30 секунд
-setInterval(() => {
-  http.get(`http://localhost:${PORT}/koyeb-ping`, () => {
-    console.log('🔁 KEEP-ALIVE TRAFFIC FOR KOYEB');
-  });
-}, 30 * 1000); // 30 секунд!
-
-// Внешние пинги тоже оставим
-setInterval(() => {
-  http.get('https://www.google.com', () => {
-    console.log('🌐 External ping');
-  });
-}, 2 * 60 * 1000);
 
 // Конфигурация
 const config = {
@@ -49,9 +17,10 @@ const config = {
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 const bot = new Telegraf(config.botToken);
 
-// Простой HTTP сервер для health checks
-const server = http.createServer((req, res) => {
-  if (req.url === '/health') {
+// HTTP сервер для Webhook
+const server = http.createServer(async (req, res) => {
+  // Health check для Koyeb
+  if (req.url === '/health' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ 
       status: 'OK', 
@@ -59,20 +28,31 @@ const server = http.createServer((req, res) => {
     }));
     return;
   }
+
+  // Webhook endpoint для Telegram
+  if (req.url === '/webhook' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const update = JSON.parse(body);
+        await bot.handleUpdate(update);
+        res.writeHead(200);
+        res.end();
+      } catch (error) {
+        console.error('Webhook error:', error);
+        res.writeHead(500);
+        res.end();
+      }
+    });
+    return;
+  }
+
   res.writeHead(404);
   res.end();
 });
 
-server.listen(8000, () => {
-  console.log('✅ Health check сервер запущен на порту 8000');
-});
-
-// Запускаем Express сервер ДОПОЛНИТЕЛЬНО
-app.listen(3000, () => {
-  console.log('✅ Express server for Koyeb on port 3000');
-});
-
-// Остальной код без изменений...
+// Остальной код БЕЗ ИЗМЕНЕНИЙ -------------------------------------------------
 // Проверка структуры таблицы
 async function checkTableStructure() {
   const { error } = await supabase
@@ -302,14 +282,21 @@ async function checkBirthdays() {
   }
 }
 
-// Запуск бота
+// Запуск бота с Webhook
 async function start() {
   await checkTableStructure();
   await checkBirthdays();
   setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
 
-  bot.launch();
-  console.log('✅ Бот успешно запущен');
+  // Настройка Webhook вместо polling
+  const webhookUrl = `https://${process.env.KOYEB_APP_NAME}.koyeb.app/webhook`;
+  await bot.telegram.setWebhook(webhookUrl);
+  console.log('✅ Webhook установлен:', webhookUrl);
+
+  // Запуск HTTP сервера
+  server.listen(8000, () => {
+    console.log('✅ HTTP сервер запущен на порту 8000');
+  });
 }
 
 // Обработка ошибок
