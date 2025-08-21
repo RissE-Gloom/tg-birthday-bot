@@ -270,6 +270,9 @@ async function start() {
   await checkBirthdays();
   setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
 
+  await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+  console.log('✅ Polling отключен');
+
   // Webhook вместо polling
   const webhookUrl = `https://${process.env.KOYEB_APP_NAME}.koyeb.app/webhook`;
   await bot.telegram.setWebhook(webhookUrl);
@@ -320,6 +323,7 @@ start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
 });
+
 
 
 
