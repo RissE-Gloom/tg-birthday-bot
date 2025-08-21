@@ -2,7 +2,39 @@ require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 const { DateTime } = require('luxon');
-const http = require('http'); // Встроенный модуль, не требует установки
+const http = require('http');
+const express = require('express'); // ДОБАВИЛ EXPRESS
+
+const app = express(); // ДОБАВИЛ EXPRESS APP
+const PORT = 8000;
+
+// ██████████████████████████████████████████████████
+// ДОБАВИЛ ЖЕСТКИЙ KEEP-ALIVE ДЛЯ KOYEB
+// ██████████████████████████████████████████████████
+
+// Express endpoints для Koyeb
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', time: new Date().toISOString() });
+});
+
+app.get('/koyeb-ping', (req, res) => {
+  console.log('✅ Koyeb видит этот трафик!');
+  res.json({ ping: 'pong', timestamp: new Date().toISOString() });
+});
+
+// Жесткие пинги каждые 30 секунд
+setInterval(() => {
+  http.get(`http://localhost:${PORT}/koyeb-ping`, () => {
+    console.log('🔁 KEEP-ALIVE TRAFFIC FOR KOYEB');
+  });
+}, 30 * 1000); // 30 секунд!
+
+// Внешние пинги тоже оставим
+setInterval(() => {
+  http.get('https://www.google.com', () => {
+    console.log('🌐 External ping');
+  });
+}, 2 * 60 * 1000);
 
 // Конфигурация
 const config = {
@@ -35,6 +67,12 @@ server.listen(8000, () => {
   console.log('✅ Health check сервер запущен на порту 8000');
 });
 
+// Запускаем Express сервер ДОПОЛНИТЕЛЬНО
+app.listen(3000, () => {
+  console.log('✅ Express server for Koyeb on port 3000');
+});
+
+// Остальной код без изменений...
 // Проверка структуры таблицы
 async function checkTableStructure() {
   const { error } = await supabase
@@ -270,18 +308,9 @@ async function start() {
   await checkBirthdays();
   setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
 
-  // ВЕРНИ POLLING - это твой рабочий код!
   bot.launch();
   console.log('✅ Бот успешно запущен');
 }
-
-// ДОБАВЬ ВНЕШНИЕ ПИНГИ чтобы Koyeb не засыпал
-const https = require('https');
-setInterval(() => {
-  http.get('http://localhost:8000/health', () => {
-  console.log('✅ Koyeb видит этот трафик!');
-});
-}, 2 * 60 * 1000);
 
 // Обработка ошибок
 bot.catch((err, ctx) => {
@@ -297,10 +326,3 @@ start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
 });
-
-
-
-
-
-
-
