@@ -2,20 +2,7 @@ require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 const { DateTime } = require('luxon');
-const express = require('express'); // Добавляем Express для health checks
-
-// Инициализация Express для health checks
-const app = express();
-const PORT = process.env.PORT || 8000;
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    service: 'telegram-birthday-bot'
-  });
-});
+const http = require('http'); // Встроенный модуль, не требует установки
 
 // Конфигурация
 const config = {
@@ -26,43 +13,78 @@ const config = {
   botUsername: 'lkworm_bot'
 };
 
-// Проверка обязательных переменных
-if (!config.botToken || !config.supabaseUrl || !config.supabaseKey) {
-  console.error('❌ Отсутствуют обязательные переменные окружения');
-  process.exit(1);
-}
-
 // Инициализация клиентов
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 const bot = new Telegraf(config.botToken);
 
-// Глобальный обработчик ошибок
-bot.catch((err, ctx) => {
-  console.error('❌ Глобальная ошибка бота:', err);
-  try {
-    if (ctx && ctx.reply) {
-      ctx.reply('⚠️ Произошла ошибка. Попробуйте позже', getMainMenu());
-    }
-  } catch (e) {
-    console.error('Ошибка при отправке сообщения об ошибке:', e);
+// Простой HTTP сервер для health checks
+const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ 
+      status: 'OK', 
+      timestamp: new Date().toISOString(),
+      service: 'telegram-birthday-bot'
+    }));
+    return;
   }
+  res.writeHead(404);
+  res.end();
 });
+
+server.listen(8000, () => {
+  console.log('✅ Health check сервер запущен на порту 8000');
+});
+
+// Функция для self-ping (чтобы Koyeb не засыпал)
+function keepAlive() {
+  const options = {
+    hostname: 'localhost',
+    port: 8000,
+    path: '/health',
+    method: 'GET',
+    timeout: 5000
+  };
+
+  const req = http.request(options, (res) => {
+    console.log(`✅ Keep-alive ping: ${res.statusCode}`);
+  });
+
+  req.on('error', (err) => {
+    console.log('❌ Keep-alive ping failed:', err.message);
+  });
+
+  req.on('timeout', () => {
+    console.log('❌ Keep-alive ping timeout');
+    req.destroy();
+  });
+
+  req.end();
+}
+
+// Keep-alive каждые 5 минут
+setInterval(keepAlive, 30 * 60 * 1000);
+keepAlive(); // Первый пинг сразу
 
 // Проверка структуры таблицы
 async function checkTableStructure() {
-  try {
-    const { error } = await supabase
-      .from('chat_members')
-      .select('user_id, chat_id, username, birth_date')
-      .limit(1);
+  const { error } = await supabase
+    .from('chat_members')
+    .select('user_id, chat_id, username, birth_date')
+    .limit(1);
 
-    if (error) {
-      console.error('❌ Ошибка структуры таблицы:', error);
-      process.exit(1);
-    }
-    console.log('✅ Структура таблицы проверена');
-  } catch (error) {
-    console.error('❌ Ошибка при проверке таблицы:', error);
+  if (error) {
+    console.error('❌ Ошибка структуры таблицы:', error);
+    console.log('ℹ️ Создайте таблицу:');
+    console.log(`
+      CREATE TABLE chat_members (
+        user_id BIGINT,
+        chat_id BIGINT,
+        username TEXT,
+        birth_date TEXT,
+        PRIMARY KEY (user_id, chat_id)
+      );
+    `);
     process.exit(1);
   }
 }
@@ -84,58 +106,44 @@ const dateUtils = {
   },
   
   isValidDate: (dateStr) => {
-    try {
-      const [day, month] = dateStr.split('.').map(Number);
-      if (month < 1 || month > 12) return false;
-      if (day < 1 || day > 31) return false;
-      
-      const months30 = [4, 6, 9, 11];
-      if (months30.includes(month) && day > 30) return false;
-      if (month === 2 && day > 29) return false;
-      
-      return true;
-    } catch (error) {
-      return false;
-    }
+    const [day, month] = dateStr.split('.').map(Number);
+    if (month < 1 || month > 12) return false;
+    if (day < 1 || day > 31) return false;
+    
+    const months30 = [4, 6, 9, 11];
+    if (months30.includes(month) && day > 30) return false;
+    if (month === 2 && day > 29) return false;
+    
+    return true;
   }
 };
 
 // Сервис работы с базой данных
 const dbService = {
   upsertUser: async (userId, chatId, username, birthDate) => {
-    try {
-      const { data, error } = await supabase
-        .from('chat_members')
-        .upsert({ 
-          user_id: userId,
-          chat_id: chatId,
-          username: username,
-          birth_date: birthDate
-        }, {
-          onConflict: ['user_id', 'chat_id']
-        });
-      
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('❌ Ошибка при сохранении пользователя:', error);
-      throw error;
-    }
+    const { data, error } = await supabase
+      .from('chat_members')
+      .upsert({ 
+        user_id: userId,
+        chat_id: chatId,
+        username: username,
+        birth_date: birthDate
+      }, {
+        onConflict: ['user_id', 'chat_id']
+      });
+    
+    if (error) throw error;
+    return data;
   },
 
   getUsersByChat: async (chatId) => {
-    try {
-      const { data, error } = await supabase
-        .from('chat_members')
-        .select('*')
-        .eq('chat_id', chatId);
-      
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error('❌ Ошибка при получении пользователей:', error);
-      throw error;
-    }
+    const { data, error } = await supabase
+      .from('chat_members')
+      .select('*')
+      .eq('chat_id', chatId);
+    
+    if (error) throw error;
+    return data || [];
   }
 };
 
@@ -151,30 +159,21 @@ function getMainMenu() {
 
 // Проверка, содержит ли текст упоминание бота
 function isBotMention(text) {
-  return text && text.includes(`@${config.botUsername}`);
+  return text.includes(`@${config.botUsername}`);
 }
 
-// Обработчики команд с обработкой ошибок
+// Обработчики команд
 bot.start(async (ctx) => {
-  try {
-    await checkTableStructure();
-    return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
-  } catch (error) {
-    console.error('Ошибка в /start:', error);
-    return ctx.reply('❌ Ошибка инициализации. Попробуйте позже.');
-  }
+  await checkTableStructure();
+  return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
 });
 
 // Обработчик кнопки "Добавить дату"
 bot.hears('📅 Добавить дату', (ctx) => {
-  try {
-    return ctx.reply(
-      `Отправьте дату в формате ДД.ММ, например:\n\n@${config.botUsername} 15.09`,
-      Markup.removeKeyboard()
-    );
-  } catch (error) {
-    console.error('Ошибка в обработчике добавления даты:', error);
-  }
+  return ctx.reply(
+    `Отправьте дату в формате ДД.ММ, например:\n\n@${config.botUsername} 15.09`,
+    Markup.removeKeyboard()
+  );
 });
 
 // Обработчик кнопки "Список дней рождений"
@@ -188,42 +187,42 @@ bot.hears('👀 Список дней рождений', async (ctx) => {
     const list = users.map(u => `• ${u.username ? '@' + u.username : 'Пользователь'}: ${u.birth_date}`).join('\n');
     return ctx.reply(`🎂 Дни рождения:\n${list}`, getMainMenu());
   } catch (error) {
-    console.error('Ошибка при получении списка:', error);
+    console.error('Ошибка:', error);
     return ctx.reply('❌ Ошибка при получении списка', getMainMenu());
   }
 });
 
 // Обработчик кнопки "Помощь"
 bot.hears('ℹ️ Помощь', (ctx) => {
-  try {
-    return ctx.replyWithMarkdown(
-      `*Как пользоваться ботом:*
+  return ctx.replyWithMarkdown(
+    `*Как пользоваться ботом:*
 1. Нажмите *"📅 Добавить дату"*
 2. Отправьте \`@${config.botUsername} ДД.ММ\`
 3. Используйте *"👀 Список дней рождений"* для просмотра
 
 *Пример:*
 \`@${config.botUsername} 15.09\` - сохранит дату 15 сентября`,
-      getMainMenu()
-    );
-  } catch (error) {
-    console.error('Ошибка в обработчике помощи:', error);
-  }
+    getMainMenu()
+  );
 });
 
 // Обработчик текста с упоминанием бота
 bot.on('text', async (ctx) => {
+  const text = ctx.message.text.trim();
+  
+  // Проверяем содержит ли текст упоминание бота
+  if (!isBotMention(text)) return;
+  
+  // Удаляем упоминание бота из текста
+  const cleanText = text.replace(`@${config.botUsername}`, '').trim();
+  
+  // Обработка команды /start
+  if (cleanText.startsWith('/start')) {
+    return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
+  }
+  
+  // Обработка даты
   try {
-    const text = ctx.message.text.trim();
-    
-    if (!isBotMention(text)) return;
-    
-    const cleanText = text.replace(`@${config.botUsername}`, '').trim();
-    
-    if (cleanText.startsWith('/start')) {
-      return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
-    }
-    
     const normalizedDate = dateUtils.normalizeDate(cleanText);
     
     if (!normalizedDate || !dateUtils.isValidDate(normalizedDate)) {
@@ -244,24 +243,19 @@ bot.on('text', async (ctx) => {
     
     return ctx.reply(replyText, getMainMenu());
   } catch (error) {
-    console.error('Ошибка при обработке текста:', error);
+    console.error('Ошибка:', error);
     return ctx.reply('❌ Ошибка при сохранении данных', getMainMenu());
   }
 });
 
-// Проверка дней рождений с улучшенной обработкой ошибок
+// Проверка дней рождений
 async function checkBirthdays() {
+  const now = DateTime.now().setZone(config.timezone);
+  const today = now.toFormat('dd.MM');
+  const in7Days = now.plus({ days: 7 }).toFormat('dd.MM');
+
   try {
-    const now = DateTime.now().setZone(config.timezone);
-    const today = now.toFormat('dd.MM');
-    const in7Days = now.plus({ days: 7 }).toFormat('dd.MM');
-
-    const { data: users, error } = await supabase.from('chat_members').select('*');
-    if (error) {
-      console.error('❌ Ошибка при получении пользователей для проверки ДР:', error);
-      return;
-    }
-
+    const { data: users } = await supabase.from('chat_members').select('*');
     if (!users) return;
 
     const todayCelebrations = {};
@@ -278,89 +272,53 @@ async function checkBirthdays() {
       }
     });
 
-    // Отправка уведомлений с обработкой ошибок
+    // Отправка уведомлений
     for (const chatId in todayCelebrations) {
-      try {
-        const mentions = todayCelebrations[chatId].map(u => 
-          u.username ? `@${u.username}` : `пользователя ${u.user_id}`
-        ).join(', ');
-        await bot.telegram.sendMessage(chatId, `🎉 Сегодня день рождения у ${mentions}! Поздравляем! 🎂`);
-      } catch (error) {
-        console.error(`❌ Ошибка отправки уведомления в чат ${chatId}:`, error);
-      }
+      const mentions = todayCelebrations[chatId].map(u => 
+        u.username ? `@${u.username}` : `пользователя ${u.user_id}`
+      ).join(', ');
+      await bot.telegram.sendMessage(chatId, `🎉 Сегодня день рождения у ${mentions}! Поздравляем! 🎂`);
     }
 
+    // Уведомления за 7 дней
     for (const chatId in upcomingCelebrations) {
-      try {
-        const mentions = upcomingCelebrations[chatId].map(u => 
-          u.username ? `@${u.username}` : `пользователя ${u.user_id}`
-        ).join(', ');
-        await bot.telegram.sendMessage(
-          chatId,
-          `⏳ Через неделю (${in7Days}) день рождения у ${mentions}! Не забудьте поздравить!`
-        );
-      } catch (error) {
-        console.error(`❌ Ошибка отправки предупреждения в чат ${chatId}:`, error);
-      }
+      const mentions = upcomingCelebrations[chatId].map(u => 
+        u.username ? `@${u.username}` : `пользователя ${u.user_id}`
+      ).join(', ');
+      await bot.telegram.sendMessage(
+        chatId,
+        `⏳ Через неделю (${in7Days}) день рождения у ${mentions}! Не забудьте поздравить!`
+      );
     }
   } catch (error) {
-    console.error('❌ Критическая ошибка в checkBirthdays:', error);
+    console.error('Ошибка проверки дней рождений:', error);
   }
 }
 
-// Улучшенный запуск бота
-async function startBot() {
-  try {
-    await checkTableStructure();
-    
-    // Запускаем Express сервер
-    app.listen(PORT, () => {
-      console.log(`✅ Health check сервер запущен на порту ${PORT}`);
-    });
+// Запуск бота
+async function start() {
+  await checkTableStructure();
+  
+  // Проверка при старте и каждые 24 часа
+  await checkBirthdays();
+  setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
 
-    // Проверка при старте
-    await checkBirthdays();
-    
-    // Запускаем проверку каждые 24 часа
-    setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
-    
-    // Запускаем бота
-    await bot.launch();
-    console.log('✅ Бот успешно запущен');
-    
-  } catch (error) {
-    console.error('❌ Критическая ошибка при запуске:', error);
-    process.exit(1);
-  }
+  bot.launch();
+  console.log('✅ Бот успешно запущен');
 }
 
-// Обработка graceful shutdown
-process.on('SIGINT', () => {
-  console.log('🛑 Остановка бота...');
-  bot.stop();
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  console.log('🛑 Остановка бота...');
-  bot.stop();
-  process.exit(0);
+// Обработка ошибок
+bot.catch((err, ctx) => {
+  console.error('Ошибка:', err);
+  ctx.reply('⚠️ Произошла ошибка. Попробуйте позже', getMainMenu());
 });
 
 process.on('unhandledRejection', (err) => {
-  console.error('❌ Необработанное обещание:', err);
+  console.error('Необработанная ошибка:', err);
 });
-
-process.on('uncaughtException', (err) => {
-  console.error('❌ Непойманное исключение:', err);
-  process.exit(1);
-});
-
-// Запускаем приложение
-startBot();
 
 start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
-
 });
+
