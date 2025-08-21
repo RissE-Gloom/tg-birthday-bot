@@ -23,8 +23,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ 
       status: 'OK', 
-      timestamp: new Date().toISOString(),
-      service: 'telegram-birthday-bot'
+      timestamp: new Date().toISOString()
     }));
     return;
   }
@@ -35,36 +34,6 @@ const server = http.createServer((req, res) => {
 server.listen(8000, () => {
   console.log('✅ Health check сервер запущен на порту 8000');
 });
-
-// Функция для self-ping (чтобы Koyeb не засыпал)
-function keepAlive() {
-  const options = {
-    hostname: 'localhost',
-    port: 8000,
-    path: '/health',
-    method: 'GET',
-    timeout: 5000
-  };
-
-  const req = http.request(options, (res) => {
-    console.log(`✅ Keep-alive ping: ${res.statusCode}`);
-  });
-
-  req.on('error', (err) => {
-    console.log('❌ Keep-alive ping failed:', err.message);
-  });
-
-  req.on('timeout', () => {
-    console.log('❌ Keep-alive ping timeout');
-    req.destroy();
-  });
-
-  req.end();
-}
-
-// Keep-alive каждые 5 минут
-setInterval(keepAlive, 30 * 60 * 1000);
-keepAlive(); // Первый пинг сразу
 
 // Проверка структуры таблицы
 async function checkTableStructure() {
@@ -321,4 +290,5 @@ start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
 });
+
 
