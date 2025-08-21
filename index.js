@@ -270,53 +270,18 @@ async function start() {
   await checkBirthdays();
   setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
 
-  // Убедись что Webhook отключен
-  try {
-    await bot.telegram.deleteWebhook();
-    console.log('✅ Старый webhook удален');
-  } catch (error) {
-    console.log('ℹ️ Не было активного webhook');
-  }
-
-  // Установи новый Webhook
-  const webhookUrl = `https://${process.env.KOYEB_APP_NAME}.koyeb.app/webhook`;
-  await bot.telegram.setWebhook(webhookUrl, {
-    drop_pending_updates: true,
-    allowed_updates: ['message', 'callback_query']
-  });
-  
-  console.log('✅ Webhook установлен:', webhookUrl);
-
-  // HTTP обработчик
-  server.on('request', async (req, res) => {
-    if (req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'OK' }));
-      return;
-    }
-
-    if (req.url === '/webhook' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', async () => {
-        try {
-          const update = JSON.parse(body);
-          await bot.handleUpdate(update);
-          res.writeHead(200);
-          res.end();
-        } catch (error) {
-          console.error('Webhook error:', error);
-          res.writeHead(500);
-          res.end();
-        }
-      });
-      return;
-    }
-
-    res.writeHead(404);
-    res.end();
-  });
+  // ВЕРНИ POLLING - это твой рабочий код!
+  bot.launch();
+  console.log('✅ Бот успешно запущен');
 }
+
+// ДОБАВЬ ВНЕШНИЕ ПИНГИ чтобы Koyeb не засыпал
+const https = require('https');
+setInterval(() => {
+  https.get('https://www.google.com', () => {
+    console.log('🐦 Keep-alive ping sent');
+  });
+}, 2 * 60 * 1000);
 
 // Обработка ошибок
 bot.catch((err, ctx) => {
@@ -332,6 +297,7 @@ start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
 });
+
 
 
 
