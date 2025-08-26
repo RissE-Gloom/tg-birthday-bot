@@ -52,16 +52,16 @@ const server = http.createServer(async (req, res) => {
   res.end();
 });
 
+// Остальной код БЕЗ ИЗМЕНЕНИЙ -------------------------------------------------
 // Проверка структуры таблицы
 async function checkTableStructure() {
-  // Проверяем основную таблицу
-  const { error: mainError } = await supabase
+  const { error } = await supabase
     .from('chat_members')
     .select('user_id, chat_id, username, birth_date')
     .limit(1);
 
-  if (mainError) {
-    console.error('❌ Ошибка структуры таблицы chat_members:', mainError);
+  if (error) {
+    console.error('❌ Ошибка структуры таблицы:', error);
     console.log('ℹ️ Создайте таблицу:');
     console.log(`
       CREATE TABLE chat_members (
@@ -72,26 +72,7 @@ async function checkTableStructure() {
         PRIMARY KEY (user_id, chat_id)
       );
     `);
-  }
-
-  // Проверяем таблицу отправленных уведомлений
-  const { error: notificationsError } = await supabase
-    .from('sent_notifications')
-    .select('notification_date, chat_id, user_id')
-    .limit(1);
-
-  if (notificationsError) {
-    console.log('ℹ️ Создайте таблицу для уведомлений:');
-    console.log(`
-      CREATE TABLE sent_notifications (
-        notification_date TEXT,
-        chat_id BIGINT,
-        user_id BIGINT,
-        notification_type TEXT,
-        created_at TIMESTAMP DEFAULT NOW(),
-        PRIMARY KEY (notification_date, chat_id, user_id, notification_type)
-      );
-    `);
+    process.exit(1);
   }
 }
 
@@ -150,59 +131,6 @@ const dbService = {
     
     if (error) throw error;
     return data || [];
-  }
-};
-
-// Сервис работы с уведомлениями
-const notificationService = {
-  // Проверяем, было ли уже отправлено уведомление сегодня
-  isNotificationSent: async (notificationDate, chatId, userId, notificationType = 'birthday') => {
-    const { data, error } = await supabase
-      .from('sent_notifications')
-      .select('*')
-      .eq('notification_date', notificationDate)
-      .eq('chat_id', chatId)
-      .eq('user_id', userId)
-      .eq('notification_type', notificationType)
-      .limit(1);
-
-    if (error) {
-      console.error('Ошибка проверки уведомления:', error);
-      return false;
-    }
-
-    return data && data.length > 0;
-  },
-
-  // Помечаем уведомление как отправленное
-  markNotificationSent: async (notificationDate, chatId, userId, notificationType = 'birthday') => {
-    const { error } = await supabase
-      .from('sent_notifications')
-      .upsert({
-        notification_date: notificationDate,
-        chat_id: chatId,
-        user_id: userId,
-        notification_type: notificationType
-      }, {
-        onConflict: ['notification_date', 'chat_id', 'user_id', 'notification_type']
-      });
-
-    if (error) {
-      console.error('Ошибка сохранения уведомления:', error);
-    }
-  },
-
-  // Очищаем старые уведомления (старше 2 дней)
-  cleanupOldNotifications: async () => {
-    const twoDaysAgo = DateTime.now().minus({ days: 2 }).toFormat('dd.MM');
-    const { error } = await supabase
-      .from('sent_notifications')
-      .delete()
-      .lt('notification_date', twoDaysAgo);
-
-    if (error) {
-      console.error('Ошибка очистки уведомлений:', error);
-    }
   }
 };
 
@@ -317,13 +245,9 @@ async function checkBirthdays() {
     const { data: users } = await supabase.from('chat_members').select('*');
     if (!users) return;
 
-    // Очищаем старые уведомления
-    await notificationService.cleanupOldNotifications();
-
     const todayCelebrations = {};
     const upcomingCelebrations = {};
 
-    // Собираем пользователей с днями рождения
     users.forEach(user => {
       if (user.birth_date === today) {
         if (!todayCelebrations[user.chat_id]) todayCelebrations[user.chat_id] = [];
@@ -335,58 +259,23 @@ async function checkBirthdays() {
       }
     });
 
-    // Отправка уведомлений о сегодняшних днях рождения
+    // Отправка уведомлений
     for (const chatId in todayCelebrations) {
-      const usersToCongratulate = [];
-      
-      for (const user of todayCelebrations[chatId]) {
-        // Проверяем, не отправляли ли уже уведомление сегодня
-        const alreadySent = await notificationService.isNotificationSent(today, chatId, user.user_id, 'birthday');
-        
-        if (!alreadySent) {
-          usersToCongratulate.push(user);
-          // Помечаем как отправленное
-          await notificationService.markNotificationSent(today, chatId, user.user_id, 'birthday');
-        }
-      }
-
-      if (usersToCongratulate.length > 0) {
-        const mentions = usersToCongratulate.map(u => 
-          u.username ? `@${u.username}` : `пользователя ${u.user_id}`
-        ).join(', ');
-
-        await bot.telegram.sendMessage(
-          chatId,
-          `🎉 Сегодня день рождения у ${mentions}! Поздравляем! 🎂`
-        );
-      }
+      const mentions = todayCelebrations[chatId].map(u => 
+        u.username ? `@${u.username}` : `пользователя ${u.user_id}`
+      ).join(', ');
+      await bot.telegram.sendMessage(chatId, `🎉 Сегодня день рождения у ${mentions}! Поздравляем! 🎂`);
     }
 
-    // Отправка уведомлений за 7 дней
+    // Уведомления за 7 дней
     for (const chatId in upcomingCelebrations) {
-      const usersToNotify = [];
-      
-      for (const user of upcomingCelebrations[chatId]) {
-        // Проверяем, не отправляли ли уже уведомление о предстоящем ДР
-        const alreadySent = await notificationService.isNotificationSent(in7Days, chatId, user.user_id, 'reminder');
-        
-        if (!alreadySent) {
-          usersToNotify.push(user);
-          // Помечаем как отправленное
-          await notificationService.markNotificationSent(in7Days, chatId, user.user_id, 'reminder');
-        }
-      }
-
-      if (usersToNotify.length > 0) {
-        const mentions = usersToNotify.map(u => 
-          u.username ? `@${u.username}` : `пользователя ${u.user_id}`
-        ).join(', ');
-
-        await bot.telegram.sendMessage(
-          chatId,
-          `⏳ Через неделю (${in7Days}) день рождения у ${mentions}! Не забудьте поздравить!`
-        );
-      }
+      const mentions = upcomingCelebrations[chatId].map(u => 
+        u.username ? `@${u.username}` : `пользователя ${u.user_id}`
+      ).join(', ');
+      await bot.telegram.sendMessage(
+        chatId,
+        `⏳ Через неделю (${in7Days}) день рождения у ${mentions}! Не забудьте поздравить!`
+      );
     }
   } catch (error) {
     console.error('Ошибка проверки дней рождений:', error);
