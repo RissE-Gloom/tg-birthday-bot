@@ -6,7 +6,7 @@ const http = require('http');
 
 // Конфигурация
 const config = {
-  botToken: process.env.BOT_TOKEN, // Изменил TELEGRAM_BOT_TOKEN на BOT_TOKEN для consistency
+  botToken: process.env.TELEGRAM_BOT_TOKEN, // Изменил TELEGRAM_BOT_TOKEN на BOT_TOKEN для consistency
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseKey: process.env.SUPABASE_KEY,
   timezone: process.env.TIMEZONE || 'Europe/Moscow',
@@ -314,3 +314,4 @@ start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
 });
+
