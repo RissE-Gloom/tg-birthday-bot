@@ -6,45 +6,35 @@ const http = require('http');
 
 // Конфигурация
 const config = {
-  botToken: process.env.TELEGRAM_BOT_TOKEN,
+  botToken: process.env.BOT_TOKEN, // Изменил TELEGRAM_BOT_TOKEN на BOT_TOKEN для consistency
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseKey: process.env.SUPABASE_KEY,
   timezone: process.env.TIMEZONE || 'Europe/Moscow',
-  botUsername: 'lkworm_bot'
+  botUsername: process.env.BOT_USERNAME || 'lkworm_bot' // Добавил возможность настройки через env
 };
 
 // Инициализация клиентов
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 const bot = new Telegraf(config.botToken);
 
-// HTTP сервер для Webhook
-const server = http.createServer(async (req, res) => {
-  // Health check для Koyeb
+// HTTP сервер для Health Check (必需 для Render)
+const server = http.createServer((req, res) => {
+  // Health check endpoint (必需 для Render)
   if (req.url === '/health' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ 
       status: 'OK', 
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      service: 'Telegram Birthday Bot'
     }));
     return;
   }
 
-  // Webhook endpoint для Telegram
+  // [KOYEB SPECIFIC] Webhook endpoint для Telegram - оставлено для совместимости
   if (req.url === '/webhook' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
-      try {
-        const update = JSON.parse(body);
-        await bot.handleUpdate(update);
-        res.writeHead(200);
-        res.end();
-      } catch (error) {
-        console.error('Webhook error:', error);
-        res.writeHead(500);
-        res.end();
-      }
-    });
+    // Render использует другой подход, этот код не будет выполняться на Render
+    res.writeHead(404);
+    res.end();
     return;
   }
 
@@ -53,6 +43,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 // Остальной код БЕЗ ИЗМЕНЕНИЙ -------------------------------------------------
+// ... (остальной код остается без изменений)
 // Проверка структуры таблицы
 async function checkTableStructure() {
   const { error } = await supabase
@@ -282,21 +273,30 @@ async function checkBirthdays() {
   }
 }
 
-// Запуск бота с Webhook
+// [КОММЕНТАРИЙ] На Render мы используем Polling вместо Webhook
+// Запуск бота с Polling (для Render)
 async function start() {
   await checkTableStructure();
+  
+  // Запускаем проверку дней рождений и устанавливаем интервал
   await checkBirthdays();
   setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
 
-  // Настройка Webhook вместо polling
-  const webhookUrl = `https://${process.env.KOYEB_APP_NAME}.koyeb.app/webhook`;
-  await bot.telegram.setWebhook(webhookUrl);
-  console.log('✅ Webhook установлен:', webhookUrl);
+  // [KOYEB SPECIFIC] Этот код не нужен на Render, оставлен для совместимости
+  // const webhookUrl = `https://${process.env.KOYEB_APP_NAME}.koyeb.app/webhook`;
+  // await bot.telegram.setWebhook(webhookUrl);
+  // console.log('✅ Webhook установлен:', webhookUrl);
 
-  // Запуск HTTP сервера
-  server.listen(8000, () => {
-    console.log('✅ HTTP сервер запущен на порту 8000');
+  // Запуск HTTP сервера для Health Check (必需 для Render)
+  const port = process.env.PORT || 8000;
+  server.listen(port, () => {
+    console.log(`✅ HTTP сервер запущен на порту ${port}`);
+    console.log(`✅ Health check доступен по пути: http://localhost:${port}/health`);
   });
+
+  // Запуск бота в режиме polling (для Render)
+  await bot.launch();
+  console.log('✅ Бот запущен в режиме polling');
 }
 
 // Обработка ошибок
@@ -309,6 +309,7 @@ process.on('unhandledRejection', (err) => {
   console.error('Необработанная ошибка:', err);
 });
 
+// Запуск приложения
 start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
