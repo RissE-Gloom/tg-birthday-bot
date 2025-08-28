@@ -6,33 +6,52 @@ const http = require('http');
 
 // Конфигурация
 const config = {
-  botToken: process.env.TELEGRAM_BOT_TOKEN, // Изменил TELEGRAM_BOT_TOKEN на BOT_TOKEN для consistency
+  botToken: process.env.TELEGRAM_BOT_TOKEN,
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseKey: process.env.SUPABASE_KEY,
   timezone: process.env.TIMEZONE || 'Europe/Moscow',
-  botUsername: process.env.BOT_USERNAME || 'lkworm_bot' // Добавил возможность настройки через env
+  botUsername: process.env.BOT_USERNAME || 'lkworm_bot'
 };
+
+// Проверка обязательных переменных
+if (!config.botToken) {
+  console.error('❌ Ошибка: TELEGRAM_BOT_TOKEN не установлен');
+  console.log('ℹ️ Установите переменную TELEGRAM_BOT_TOKEN в настройках Render');
+  process.exit(1);
+}
 
 // Инициализация клиентов
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 const bot = new Telegraf(config.botToken);
 
-// HTTP сервер для Health Check (必需 для Render)
+// HTTP сервер для Health Check
 const server = http.createServer((req, res) => {
-  // Health check endpoint (必需 для Render)
+  // Health check endpoint для Render и cron-job.org
   if (req.url === '/health' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    const userAgent = req.headers['user-agent'] || '';
+    const isCronJob = userAgent.includes('cron-job.org');
+    
+    if (isCronJob) {
+      console.log('✅ Ping от cron-job.org - бот активен');
+    }
+    
+    res.writeHead(200, { 
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET'
+    });
     res.end(JSON.stringify({ 
       status: 'OK', 
       timestamp: new Date().toISOString(),
-      service: 'Telegram Birthday Bot'
+      service: 'Telegram Birthday Bot',
+      timezone: config.timezone,
+      visited: new Date().toLocaleString('ru-RU')
     }));
     return;
   }
 
-  // [KOYEB SPECIFIC] Webhook endpoint для Telegram - оставлено для совместимости
+  // Webhook endpoint (оставлено для совместимости)
   if (req.url === '/webhook' && req.method === 'POST') {
-    // Render использует другой подход, этот код не будет выполняться на Render
     res.writeHead(404);
     res.end();
     return;
@@ -43,7 +62,6 @@ const server = http.createServer((req, res) => {
 });
 
 // Остальной код БЕЗ ИЗМЕНЕНИЙ -------------------------------------------------
-// ... (остальной код остается без изменений)
 // Проверка структуры таблицы
 async function checkTableStructure() {
   const { error } = await supabase
@@ -276,35 +294,37 @@ async function checkBirthdays() {
   }
 }
 
-// [КОММЕНТАРИЙ] На Render мы используем Polling вместо Webhook
 // Запуск бота с Polling (для Render)
 async function start() {
+  console.log('🚀 Запуск бота...');
+  console.log('📋 Проверка конфигурации:');
+  console.log('BOT_TOKEN:', config.botToken ? '✅ Установлен' : '❌ Отсутствует');
+  console.log('SUPABASE_URL:', config.supabaseUrl ? '✅ Установлен' : '❌ Отсутствует');
+  console.log('TIMEZONE:', config.timezone);
+  
   await checkTableStructure();
   
   // Запускаем проверку дней рождений и устанавливаем интервал
   await checkBirthdays();
   setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
 
-  // [KOYEB SPECIFIC] Этот код не нужен на Render, оставлен для совместимости
-  // const webhookUrl = `https://${process.env.KOYEB_APP_NAME}.koyeb.app/webhook`;
-  // await bot.telegram.setWebhook(webhookUrl);
-  // console.log('✅ Webhook установлен:', webhookUrl);
-
-  // Запуск HTTP сервера для Health Check (必需 для Render)
+  // Запуск HTTP сервера для Health Check
   const port = process.env.PORT || 8000;
   server.listen(port, () => {
     console.log(`✅ HTTP сервер запущен на порту ${port}`);
-    console.log(`✅ Health check доступен по пути: http://localhost:${port}/health`);
+    console.log(`✅ Health check доступен по пути: /health`);
+    console.log(`✅ Для cron-job.org используйте URL: https://your-app.onrender.com/health`);
   });
 
-  // Запуск бота в режиме polling (для Render)
+  // Запуск бота в режиме polling
   await bot.launch();
   console.log('✅ Бот запущен в режиме polling');
+  console.log('✅ Бот готов к работе!');
 }
 
 // Обработка ошибок
 bot.catch((err, ctx) => {
-  console.error('Ошибка:', err);
+  console.error('Ошибка бота:', err);
   ctx.reply('⚠️ Произошла ошибка. Попробуйте позже', getMainMenu());
 });
 
