@@ -37,19 +37,6 @@ const server = http.createServer(async (req, res) => {
       console.log('✅ Ping от cron-job.org - бот активен');
     }
     
-    // 🔥 ОПТИМИЗАЦИЯ: Проверка дней рождений раз в сутки
-    const today = DateTime.now().setZone(config.timezone).toISODate();
-    if (lastCheckDate !== today) {
-      console.log('🎂 Запуск ежедневной проверки дней рождений...');
-      try {
-        await checkBirthdays();
-        lastCheckDate = today;
-        console.log('✅ Проверка дней рождений завершена');
-      } catch (error) {
-        console.error('❌ Ошибка при проверке дней рождений:', error);
-      }
-    }
-    
     res.writeHead(200, { 
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
@@ -70,7 +57,137 @@ const server = http.createServer(async (req, res) => {
   res.end();
 });
 
-// ... (остальные функции: checkTableStructure, dateUtils, dbService остаются без изменений) ...
+// ==================== ВОССТАНАВЛИВАЕМ УДАЛЕННЫЕ ФУНКЦИИ ====================
+
+// Проверка структуры таблицы
+async function checkTableStructure() {
+  const { error } = await supabase
+    .from('chat_members')
+    .select('user_id, chat_id, username, birth_date')
+    .limit(1);
+
+  if (error) {
+    console.error('❌ Ошибка структуры таблицы:', error);
+    console.log('ℹ️ Создайте таблицу:');
+    console.log(`
+      CREATE TABLE chat_members (
+        user_id BIGINT,
+        chat_id BIGINT,
+        username TEXT,
+        birth_date TEXT,
+        PRIMARY KEY (user_id, chat_id)
+      );
+    `);
+    process.exit(1);
+  }
+}
+
+// Утилиты для работы с датами
+const dateUtils = {
+  normalizeDate: (input) => {
+    const cleaned = input.replace(/\D/g, '');
+    if (cleaned.length === 3) {
+      return `${cleaned[0].padStart(2, '0')}.${cleaned.slice(1).padStart(2, '0')}`;
+    }
+    if (cleaned.length === 4) {
+      return `${cleaned.slice(0, 2)}.${cleaned.slice(2).padStart(2, '0')}`;
+    }
+    if (cleaned.length === 2) {
+      return `${cleaned.padStart(2, '0')}.01`;
+    }
+    return null;
+  },
+  
+  isValidDate: (dateStr) => {
+    const [day, month] = dateStr.split('.').map(Number);
+    if (month < 1 || month > 12) return false;
+    if (day < 1 || day > 31) return false;
+    
+    const months30 = [4, 6, 9, 11];
+    if (months30.includes(month) && day > 30) return false;
+    if (month === 2 && day > 29) return false;
+    
+    return true;
+  }
+};
+
+// Сервис работы с базой данных
+const dbService = {
+  upsertUser: async (userId, chatId, username, birthDate) => {
+    const { data, error } = await supabase
+      .from('chat_members')
+      .upsert({ 
+        user_id: userId,
+        chat_id: chatId,
+        username: username,
+        birth_date: birthDate
+      }, {
+        onConflict: ['user_id', 'chat_id']
+      });
+    
+    if (error) throw error;
+    return data;
+  },
+
+  getUsersByChat: async (chatId) => {
+    const { data, error } = await supabase
+      .from('chat_members')
+      .select('*')
+      .eq('chat_id', chatId);
+    
+    if (error) throw error;
+    return data || [];
+  }
+};
+
+// Проверка дней рождений
+async function checkBirthdays() {
+  const now = DateTime.now().setZone(config.timezone);
+  const today = now.toFormat('dd.MM');
+  const in7Days = now.plus({ days: 7 }).toFormat('dd.MM');
+
+  try {
+    const { data: users } = await supabase.from('chat_members').select('*');
+    if (!users) return;
+
+    const todayCelebrations = {};
+    const upcomingCelebrations = {};
+
+    users.forEach(user => {
+      if (user.birth_date === today) {
+        if (!todayCelebrations[user.chat_id]) todayCelebrations[user.chat_id] = [];
+        todayCelebrations[user.chat_id].push(user);
+      }
+      else if (user.birth_date === in7Days) {
+        if (!upcomingCelebrations[user.chat_id]) upcomingCelebrations[user.chat_id] = [];
+        upcomingCelebrations[user.chat_id].push(user);
+      }
+    });
+
+    // Отправка уведомлений
+    for (const chatId in todayCelebrations) {
+      const mentions = todayCelebrations[chatId].map(u => 
+        u.username ? `@${u.username}` : `пользователя ${u.user_id}`
+      ).join(', ');
+      await bot.telegram.sendMessage(chatId, `🎉 Сегодня день рождения у ${mentions}! Поздравляем! 🎂`);
+    }
+
+    // Уведомления за 7 дней
+    for (const chatId in upcomingCelebrations) {
+      const mentions = upcomingCelebrations[chatId].map(u => 
+        u.username ? `@${u.username}` : `пользователя ${u.user_id}`
+      ).join(', ');
+      await bot.telegram.sendMessage(
+        chatId,
+        `⏳ Через неделю (${in7Days}) день рождения у ${mentions}! Не забудьте поздравить!`
+      );
+    }
+  } catch (error) {
+    console.error('Ошибка проверки дней рождений:', error);
+  }
+}
+
+// ==================== КОНЕЦ ВОССТАНОВЛЕННЫХ ФУНКЦИЙ ====================
 
 // Меню бота
 function getMainMenu() {
@@ -89,8 +206,6 @@ function removeKeyboard() {
 function isBotMention(text) {
   return text.includes(`@${config.botUsername}`);
 }
-
-// 🔥 ОПТИМИЗАЦИЯ: Используем встроенные обработчики Telegraf
 
 // Обработчик команды /start
 bot.command('start', async (ctx) => {
@@ -136,7 +251,7 @@ bot.hears('ℹ️ Помощь', (ctx) => {
   );
 });
 
-// 🔥 ОПТИМИЗАЦИЯ: Отдельный обработчик для упоминаний с датами
+// Обработчик для упоминаний с датами
 bot.hears(new RegExp(`@${config.botUsername}\\s+[0-9.,]+`), async (ctx) => {
   const text = ctx.message.text.trim();
   const cleanText = text.replace(`@${config.botUsername}`, '').trim();
@@ -170,31 +285,36 @@ bot.hears(new RegExp(`@${config.botUsername}\\s+[0-9.,]+`), async (ctx) => {
   }
 });
 
-// 🔥 ОПТИМИЗАЦИЯ: Упрощенный обработчик текста (только для команд)
-bot.on('text', async (ctx) => {
-  // Теперь здесь обрабатываются только текстовые сообщения без упоминаний
-  // Упоминания обрабатываются отдельным обработчиком выше
-  console.log('Получено текстовое сообщение:', ctx.message.text);
-});
-
-// ... (функция checkBirthdays остается без изменений) ...
-
-// Запуск бота с Polling (УПРОЩЕННЫЙ - без setInterval)
+// Запуск бота с Polling + Health Check
 async function start() {
   console.log('🚀 Запуск бота...');
   console.log('📋 Проверка конфигурации...');
   
   await checkTableStructure();
   
-  // 🔥 ОПТИМИЗАЦИЯ: Убрали setInterval - проверка теперь в /health
-  console.log('✅ Проверка дней рождений будет запускаться через /health endpoint');
+  // Запускаем проверку дней рождений по расписанию
+  await checkBirthdays();
+  
+  // Интервал для ежедневной проверки
+  setInterval(async () => {
+    const today = DateTime.now().setZone(config.timezone).toISODate();
+    if (lastCheckDate !== today) {
+      console.log('🔄 Запуск ежедневной проверки дней рождений...');
+      try {
+        await checkBirthdays();
+        lastCheckDate = today;
+        console.log('✅ Проверка дней рождений завершена');
+      } catch (error) {
+        console.error('❌ Ошибка при проверке дней рождений:', error);
+      }
+    }
+  }, 30 * 60 * 1000); // Проверяем каждые 30 минут
 
   // Запуск HTTP сервера для Health Check
   const port = process.env.PORT || 8000;
-  server.listen(port, () => {
+  server.listen(port, '0.0.0.0', () => {
     console.log(`✅ HTTP сервер запущен на порту ${port}`);
-    console.log(`✅ Health check: http://localhost:${port}/health`);
-    console.log(`⏰ Настройте cron-job.org на вызов этого URL раз в сутки`);
+    console.log(`✅ Health check доступен по пути: /health`);
   });
 
   // Запуск бота в режиме polling
