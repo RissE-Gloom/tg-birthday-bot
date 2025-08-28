@@ -13,6 +13,9 @@ const config = {
   botUsername: process.env.BOT_USERNAME || 'lkworm_bot'
 };
 
+// Переменная для отслеживания последней проверки
+let lastCheckDate = null;
+
 // Проверка обязательных переменных
 if (!config.botToken) {
   console.error('❌ Ошибка: TELEGRAM_BOT_TOKEN не установлен');
@@ -25,7 +28,7 @@ const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 const bot = new Telegraf(config.botToken);
 
 // HTTP сервер для Health Check
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   // Health check endpoint для Render и cron-job.org
   if (req.url === '/health' && req.method === 'GET') {
     const userAgent = req.headers['user-agent'] || '';
@@ -33,6 +36,19 @@ const server = http.createServer((req, res) => {
     
     if (isCronJob) {
       console.log('✅ Ping от cron-job.org - бот активен');
+    }
+    
+    // 🔥 ОПТИМИЗАЦИЯ: Проверка дней рождений раз в сутки
+    const today = DateTime.now().setZone(config.timezone).toISODate();
+    if (lastCheckDate !== today) {
+      console.log('🎂 Запуск ежедневной проверки дней рождений...');
+      try {
+        await checkBirthdays();
+        lastCheckDate = today;
+        console.log('✅ Проверка дней рождений завершена');
+      } catch (error) {
+        console.error('❌ Ошибка при проверке дней рождений:', error);
+      }
     }
     
     res.writeHead(200, { 
@@ -45,15 +61,9 @@ const server = http.createServer((req, res) => {
       timestamp: new Date().toISOString(),
       service: 'Telegram Birthday Bot',
       timezone: config.timezone,
+      lastCheckDate: lastCheckDate,
       visited: new Date().toLocaleString('ru-RU')
     }));
-    return;
-  }
-
-  // Webhook endpoint (оставлено для совместимости)
-  if (req.url === '/webhook' && req.method === 'POST') {
-    res.writeHead(404);
-    res.end();
     return;
   }
 
@@ -61,7 +71,6 @@ const server = http.createServer((req, res) => {
   res.end();
 });
 
-// Остальной код БЕЗ ИЗМЕНЕНИЙ -------------------------------------------------
 // Проверка структуры таблицы
 async function checkTableStructure() {
   const { error } = await supabase
@@ -153,13 +162,18 @@ function getMainMenu() {
   .oneTime();
 }
 
-// Проверка, содержит ли текст упоминание бота
+function removeKeyboard() {
+  return Markup.removeKeyboard();
+}
+
 function isBotMention(text) {
   return text.includes(`@${config.botUsername}`);
 }
 
-// Обработчики команд
-bot.start(async (ctx) => {
+// 🔥 ОПТИМИЗАЦИЯ: Используем встроенные обработчики Telegraf
+
+// Обработчик команды /start
+bot.command('start', async (ctx) => {
   await checkTableStructure();
   return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
 });
@@ -168,7 +182,7 @@ bot.start(async (ctx) => {
 bot.hears('📅 Добавить дату', (ctx) => {
   return ctx.reply(
     `Отправьте дату в формате ДД.ММ, например:\n\n@${config.botUsername} 15.09`,
-    Markup.removeKeyboard()
+    removeKeyboard()
   );
 });
 
@@ -205,27 +219,19 @@ bot.hears('ℹ️ Помощь', (ctx) => {
   );
 });
 
-// Обработчик текста с упоминанием бота
-bot.on('text', async (ctx) => {
+// 🔥 ОПТИМИЗАЦИЯ: Отдельный обработчик для упоминаний с датами
+bot.hears(new RegExp(`@${config.botUsername}\\s+[0-9.,]+`), async (ctx) => {
   const text = ctx.message.text.trim();
-  
-  // Проверяем содержит ли текст упоминание бота
-  if (!isBotMention(text)) return;
-  
-  // Удаляем упоминание бота из текста
   const cleanText = text.replace(`@${config.botUsername}`, '').trim();
   
-  // Обработка команды /start
-  if (cleanText.startsWith('/start')) {
-    return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
-  }
-  
-  // Обработка даты
   try {
     const normalizedDate = dateUtils.normalizeDate(cleanText);
     
     if (!normalizedDate || !dateUtils.isValidDate(normalizedDate)) {
-      return ctx.reply('❌ Неверный формат! Используйте ДД.ММ. Пример:\n\n`@' + config.botUsername + ' 15.09`');
+      return ctx.reply(
+        '❌ Неверный формат! Используйте ДД.ММ. Пример:\n\n`@' + config.botUsername + ' 15.09`',
+        getMainMenu()
+      );
     }
 
     const username = ctx.from.username || null;
@@ -247,7 +253,14 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// Проверка дней рождений
+// 🔥 ОПТИМИЗАЦИЯ: Упрощенный обработчик текста (только для команд)
+bot.on('text', async (ctx) => {
+  // Теперь здесь обрабатываются только текстовые сообщения без упоминаний
+  // Упоминания обрабатываются отдельным обработчиком выше
+  console.log('Получено текстовое сообщение:', ctx.message.text);
+});
+
+// Проверка дней рождений с обработкой ошибок
 async function checkBirthdays() {
   const now = DateTime.now().setZone(config.timezone);
   const today = now.toFormat('dd.MM');
@@ -271,30 +284,46 @@ async function checkBirthdays() {
       }
     });
 
-    // Отправка уведомлений
+    // Отправка уведомлений с обработкой ошибок
     for (const chatId in todayCelebrations) {
-      const mentions = todayCelebrations[chatId].map(u => 
-        u.username ? `@${u.username}` : `пользователя ${u.user_id}`
-      ).join(', ');
-      await bot.telegram.sendMessage(chatId, `🎉 Сегодня день рождения у ${mentions}! Поздравляем! 🎂`);
+      try {
+        const mentions = todayCelebrations[chatId].map(u => 
+          u.username ? `@${u.username}` : `пользователя ${u.user_id}`
+        ).join(', ');
+        await bot.telegram.sendMessage(chatId, `🎉 Сегодня день рождения у ${mentions}! Поздравляем! 🎂`);
+      } catch (error) {
+        if (error.response && error.response.error_code === 403) {
+          console.log(`❌ Бот исключен из чата ${chatId}, пропускаем...`);
+        } else {
+          console.error('Ошибка отправки сообщения:', error);
+        }
+      }
     }
 
-    // Уведомления за 7 дней
+    // Уведомления за 7 дней с обработкой ошибок
     for (const chatId in upcomingCelebrations) {
-      const mentions = upcomingCelebrations[chatId].map(u => 
-        u.username ? `@${u.username}` : `пользователя ${u.user_id}`
-      ).join(', ');
-      await bot.telegram.sendMessage(
-        chatId,
-        `⏳ Через неделю (${in7Days}) день рождения у ${mentions}! Не забудьте поздравить!`
-      );
+      try {
+        const mentions = upcomingCelebrations[chatId].map(u => 
+          u.username ? `@${u.username}` : `пользователя ${u.user_id}`
+        ).join(', ');
+        await bot.telegram.sendMessage(
+          chatId,
+          `⏳ Через неделю (${in7Days}) день рождения у ${mentions}! Не забудьте поздравить!`
+        );
+      } catch (error) {
+        if (error.response && error.response.error_code === 403) {
+          console.log(`❌ Бot исключен из чата ${chatId}, пропускаем...`);
+        } else {
+          console.error('Ошибка отправки сообщения:', error);
+        }
+      }
     }
   } catch (error) {
     console.error('Ошибка проверки дней рождений:', error);
   }
 }
 
-// Запуск бота с Polling (для Render)
+// Запуск бота с Polling (УПРОЩЕННЫЙ - без setInterval)
 async function start() {
   console.log('🚀 Запуск бота...');
   console.log('📋 Проверка конфигурации:');
@@ -304,16 +333,15 @@ async function start() {
   
   await checkTableStructure();
   
-  // Запускаем проверку дней рождений и устанавливаем интервал
-  await checkBirthdays();
-  setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
+  // 🔥 ОПТИМИЗАЦИЯ: Убрали setInterval - проверка теперь в /health
+  console.log('✅ Проверка дней рождений будет запускаться через /health endpoint');
 
   // Запуск HTTP сервера для Health Check
   const port = process.env.PORT || 8000;
-  server.listen(port, () => {
+  server.listen(port, '0.0.0.0', () => {
     console.log(`✅ HTTP сервер запущен на порту ${port}`);
-    console.log(`✅ Health check доступен по пути: /health`);
-    console.log(`✅ Для cron-job.org используйте URL: https://your-app.onrender.com/health`);
+    console.log(`✅ Health check: http://localhost:${port}/health`);
+    console.log(`⏰ Настройте cron-job.org на вызов этого URL раз в сутки`);
   });
 
   // Запуск бота в режиме polling
