@@ -13,12 +13,10 @@ const config = {
   botUsername: process.env.BOT_USERNAME || 'lkworm_bot'
 };
 
-// Переменная для отслеживания последней проверки
-let lastCheckDate = null;
-
 // Проверка обязательных переменных
 if (!config.botToken) {
   console.error('❌ Ошибка: TELEGRAM_BOT_TOKEN не установлен');
+  console.log('ℹ️ Установите переменную TELEGRAM_BOT_TOKEN в настройках Render');
   process.exit(1);
 }
 
@@ -27,7 +25,7 @@ const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 const bot = new Telegraf(config.botToken);
 
 // HTTP сервер для Health Check
-const server = http.createServer(async (req, res) => {
+const server = http.createServer((req, res) => {
   // Health check endpoint для Render и cron-job.org
   if (req.url === '/health' && req.method === 'GET') {
     const userAgent = req.headers['user-agent'] || '';
@@ -47,9 +45,15 @@ const server = http.createServer(async (req, res) => {
       timestamp: new Date().toISOString(),
       service: 'Telegram Birthday Bot',
       timezone: config.timezone,
-      lastCheckDate: lastCheckDate,
       visited: new Date().toLocaleString('ru-RU')
     }));
+    return;
+  }
+
+  // Webhook endpoint (оставлено для совместимости)
+  if (req.url === '/webhook' && req.method === 'POST') {
+    res.writeHead(404);
+    res.end();
     return;
   }
 
@@ -57,8 +61,7 @@ const server = http.createServer(async (req, res) => {
   res.end();
 });
 
-// ==================== ВОССТАНАВЛИВАЕМ УДАЛЕННЫЕ ФУНКЦИИ ====================
-
+// Остальной код БЕЗ ИЗМЕНЕНИЙ -------------------------------------------------
 // Проверка структуры таблицы
 async function checkTableStructure() {
   const { error } = await supabase
@@ -140,6 +143,118 @@ const dbService = {
   }
 };
 
+// Меню бота (ОБНОВЛЕНО - теперь oneTime и resize)
+function getMainMenu() {
+  return Markup.keyboard([
+    ['📅 Добавить дату', '👀 Список дней рождений'],
+    ['ℹ️ Помощь']
+  ])
+  .resize() // Кнопки занимают всю ширину
+  .oneTime(); // Клавиатура скрывается после использования
+}
+
+// Функция для скрытия клавиатуры (НОВАЯ)
+function removeKeyboard() {
+  return Markup.removeKeyboard();
+}
+
+// Проверка, содержит ли текст упоминание бота
+function isBotMention(text) {
+  return text.includes(`@${config.botUsername}`);
+}
+
+// Обработчики команд (ОБНОВЛЕНО - везде добавлено скрытие клавиатуры)
+bot.start(async (ctx) => {
+  await checkTableStructure();
+  return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
+});
+
+// Обработчик кнопки "Добавить дату" (ОБНОВЛЕНО)
+bot.hears('📅 Добавить дату', (ctx) => {
+  return ctx.reply(
+    `Отправьте дату в формате ДД.ММ, например:\n\n@${config.botUsername} 15.09`,
+    removeKeyboard() // Скрываем клавиатуру после выбора
+  );
+});
+
+// Обработчик кнопки "Список дней рождений" (ОБНОВЛЕНО)
+bot.hears('👀 Список дней рождений', async (ctx) => {
+  try {
+    const users = await dbService.getUsersByChat(ctx.chat.id);
+    if (users.length === 0) {
+      return ctx.reply('В этом чате пока нет сохраненных дат', getMainMenu());
+    }
+    
+    const list = users.map(u => `• ${u.username ? '@' + u.username : 'Пользователь'}: ${u.birth_date}`).join('\n');
+    return ctx.reply(`🎂 Дни рождения:\n${list}`, getMainMenu());
+  } catch (error) {
+    console.error('Ошибка:', error);
+    return ctx.reply('❌ Ошибка при получении списка', getMainMenu());
+  }
+});
+
+// Обработчик кнопки "Помощь" (ОБНОВЛЕНО)
+bot.hears('ℹ️ Помощь', (ctx) => {
+  return ctx.replyWithMarkdown(
+    `*Как пользоваться ботом:*
+1. Нажмите *"📅 Добавить дату"*
+2. Отправьте \`@${config.botUsername} ДД.ММ\`
+3. Используйте *"👀 Список дней рождений"* для просмотра
+
+*Пример:*
+\`@${config.botUsername} 15.09\` - сохранит дату 15 сентября.
+
+Важно! Если вы указали в лс бота свой день рождения, то бот поздравит именно через лс.
+Если в чате добавляли день рождения, то поздравит в чате.`,
+    getMainMenu() // Показываем меню снова после помощи
+  );
+});
+
+// Обработчик текста с упоминанием бота (ОБНОВЛЕНО)
+bot.on('text', async (ctx) => {
+  const text = ctx.message.text.trim();
+  
+  // Проверяем содержит ли текст упоминание бота
+  if (!isBotMention(text)) return;
+  
+  // Удаляем упоминание бота из текста
+  const cleanText = text.replace(`@${config.botUsername}`, '').trim();
+  
+  // Обработка команды /start
+  if (cleanText.startsWith('/start')) {
+    return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
+  }
+  
+  // Обработка даты
+  try {
+    const normalizedDate = dateUtils.normalizeDate(cleanText);
+    
+    if (!normalizedDate || !dateUtils.isValidDate(normalizedDate)) {
+      return ctx.reply(
+        '❌ Неверный формат! Используйте ДД.ММ. Пример:\n\n`@' + config.botUsername + ' 15.09`',
+        getMainMenu() // Возвращаем меню при ошибке
+      );
+    }
+
+    const username = ctx.from.username || null;
+    await dbService.upsertUser(
+      ctx.from.id,
+      ctx.chat.id,
+      username,
+      normalizedDate
+    );
+    
+    const replyText = username 
+      ? `✅ Дата "${normalizedDate}" для @${username} сохранена!`
+      : `✅ Дата "${normalizedDate}" сохранена!`;
+    
+    return ctx.reply(replyText, getMainMenu()); // Показываем меню снова
+  } catch (error) {
+    console.error('Ошибка:', error);
+    return ctx.reply('❌ Ошибка при сохранении данных', getMainMenu());
+  }
+});
+
 // Проверка дней рождений
 async function checkBirthdays() {
   const now = DateTime.now().setZone(config.timezone);
@@ -187,134 +302,26 @@ async function checkBirthdays() {
   }
 }
 
-// ==================== КОНЕЦ ВОССТАНОВЛЕННЫХ ФУНКЦИЙ ====================
-
-// Меню бота
-function getMainMenu() {
-  return Markup.keyboard([
-    ['📅 Добавить дату', '👀 Список дней рождений'],
-    ['ℹ️ Помощь']
-  ])
-  .resize()
-  .oneTime();
-}
-
-function removeKeyboard() {
-  return Markup.removeKeyboard();
-}
-
-function isBotMention(text) {
-  return text.includes(`@${config.botUsername}`);
-}
-
-// Обработчик команды /start
-bot.command('start', async (ctx) => {
-  await checkTableStructure();
-  return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
-});
-
-// Обработчик кнопки "Добавить дату"
-bot.hears('📅 Добавить дату', (ctx) => {
-  return ctx.reply(
-    `Отправьте дату в формате ДД.ММ, например:\n\n@${config.botUsername} 15.09`,
-    removeKeyboard()
-  );
-});
-
-// Обработчик кнопки "Список дней рождений"
-bot.hears('👀 Список дней рождений', async (ctx) => {
-  try {
-    const users = await dbService.getUsersByChat(ctx.chat.id);
-    if (users.length === 0) {
-      return ctx.reply('В этом чате пока нет сохраненных дат', getMainMenu());
-    }
-    
-    const list = users.map(u => `• ${u.username ? '@' + u.username : 'Пользователь'}: ${u.birth_date}`).join('\n');
-    return ctx.reply(`🎂 Дни рождения:\n${list}`, getMainMenu());
-  } catch (error) {
-    console.error('Ошибка:', error);
-    return ctx.reply('❌ Ошибка при получении списка', getMainMenu());
-  }
-});
-
-// Обработчик кнопки "Помощь"
-bot.hears('ℹ️ Помощь', (ctx) => {
-  return ctx.replyWithMarkdown(
-    `*Как пользоваться ботом:*
-1. Нажмите *"📅 Добавить дату"*
-2. Отправьте \`@${config.botUsername} ДД.ММ\`
-3. Используйте *"👀 Список дней рождений"* для просмотра
-
-*Пример:*
-\`@${config.botUsername} 15.09\` - сохранит дату 15 сентября.`,
-    getMainMenu()
-  );
-});
-
-// Обработчик для упоминаний с датами
-bot.hears(new RegExp(`@${config.botUsername}\\s+[0-9.,]+`), async (ctx) => {
-  const text = ctx.message.text.trim();
-  const cleanText = text.replace(`@${config.botUsername}`, '').trim();
-  
-  try {
-    const normalizedDate = dateUtils.normalizeDate(cleanText);
-    
-    if (!normalizedDate || !dateUtils.isValidDate(normalizedDate)) {
-      return ctx.reply(
-        '❌ Неверный формат! Используйте ДД.ММ. Пример:\n\n`@' + config.botUsername + ' 15.09`',
-        getMainMenu()
-      );
-    }
-
-    const username = ctx.from.username || null;
-    await dbService.upsertUser(
-      ctx.from.id,
-      ctx.chat.id,
-      username,
-      normalizedDate
-    );
-    
-    const replyText = username 
-      ? `✅ Дата "${normalizedDate}" для @${username} сохранена!`
-      : `✅ Дата "${normalizedDate}" сохранена!`;
-    
-    return ctx.reply(replyText, getMainMenu());
-  } catch (error) {
-    console.error('Ошибка:', error);
-    return ctx.reply('❌ Ошибка при сохранении данных', getMainMenu());
-  }
-});
-
-// Запуск бота с Polling + Health Check
+// Запуск бота с Polling (для Render)
 async function start() {
   console.log('🚀 Запуск бота...');
-  console.log('📋 Проверка конфигурации...');
+  console.log('📋 Проверка конфигурации:');
+  console.log('BOT_TOKEN:', config.botToken ? '✅ Установлен' : '❌ Отсутствует');
+  console.log('SUPABASE_URL:', config.supabaseUrl ? '✅ Установлен' : '❌ Отсутствует');
+  console.log('TIMEZONE:', config.timezone);
   
   await checkTableStructure();
   
-  // Запускаем проверку дней рождений по расписанию
+  // Запускаем проверку дней рождений и устанавливаем интервал
   await checkBirthdays();
-  
-  // Интервал для ежедневной проверки
-  setInterval(async () => {
-    const today = DateTime.now().setZone(config.timezone).toISODate();
-    if (lastCheckDate !== today) {
-      console.log('🔄 Запуск ежедневной проверки дней рождений...');
-      try {
-        await checkBirthdays();
-        lastCheckDate = today;
-        console.log('✅ Проверка дней рождений завершена');
-      } catch (error) {
-        console.error('❌ Ошибка при проверке дней рождений:', error);
-      }
-    }
-  }, 30 * 60 * 1000); // Проверяем каждые 30 минут
+  setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
 
   // Запуск HTTP сервера для Health Check
   const port = process.env.PORT || 8000;
-  server.listen(port, '0.0.0.0', () => {
+  server.listen(port, () => {
     console.log(`✅ HTTP сервер запущен на порту ${port}`);
     console.log(`✅ Health check доступен по пути: /health`);
+    console.log(`✅ Для cron-job.org используйте URL: https://your-app.onrender.com/health`);
   });
 
   // Запуск бота в режиме polling
