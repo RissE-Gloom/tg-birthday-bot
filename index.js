@@ -152,14 +152,17 @@ const dbService = {
   }
 };
 
-// Меню бота
+// 🔥 ЗАМЕНА: Inline Keyboard вместо обычной
 function getMainMenu() {
-  return Markup.keyboard([
-    ['📅 Добавить дату', '👀 Список дней рождений'],
-    ['ℹ️ Помощь']
-  ])
-  .resize()
-  .oneTime();
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('📅 Добавить дату', 'add_date'),
+      Markup.button.callback('👀 Список дней рождений', 'view_birthdays')
+    ],
+    [
+      Markup.button.callback('ℹ️ Помощь', 'show_help')
+    ]
+  ]);
 }
 
 function removeKeyboard() {
@@ -178,17 +181,18 @@ bot.command('start', async (ctx) => {
   return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
 });
 
-// Обработчик кнопки "Добавить дату"
-bot.hears('📅 Добавить дату', (ctx) => {
+// 🔥 ЗАМЕНА: Обработчики для inline кнопок
+bot.action('add_date', (ctx) => {
+  ctx.answerCbQuery();
   return ctx.reply(
     `Отправьте дату в формате ДД.ММ, например:\n\n@${config.botUsername} 15.09`,
     removeKeyboard()
   );
 });
 
-// Обработчик кнопки "Список дней рождений"
-bot.hears('👀 Список дней рождений', async (ctx) => {
+bot.action('view_birthdays', async (ctx) => {
   try {
+    ctx.answerCbQuery();
     const users = await dbService.getUsersByChat(ctx.chat.id);
     if (users.length === 0) {
       return ctx.reply('В этом чате пока нет сохраненных дат', getMainMenu());
@@ -202,8 +206,8 @@ bot.hears('👀 Список дней рождений', async (ctx) => {
   }
 });
 
-// Обработчик кнопки "Помощь"
-bot.hears('ℹ️ Помощь', (ctx) => {
+bot.action('show_help', (ctx) => {
+  ctx.answerCbQuery();
   return ctx.replyWithMarkdown(
     `*Как пользоваться ботом:*
 1. Нажмите *"📅 Добавить дату"*
