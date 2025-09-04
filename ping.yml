@@ -1,13 +1,42 @@
-name: Keep Render Alive
+name: Render Wake-up Service
 on:
   schedule:
     - cron: '*/5 * * * *'  # Каждые 5 минут
   workflow_dispatch:
 
 jobs:
-  ping:
+  wake-render:
     runs-on: ubuntu-latest
+    timeout-minutes: 5      # Максимум 5 минут на выполнение
     steps:
-    - name: Ping Render
+    - name: Wake up Render with patience
       run: |
-        curl -s "https://tg-birthday-bot.onrender.com/health"
+        echo "🕐 Начинаем будить Render..."
+        echo "⏰ Время начала: $(date)"
+        
+        # Пробуем несколько раз с интервалом
+        for attempt in {1..6}; do
+          echo "🔔 Попытка $attempt из 6..."
+          
+          # Делаем запрос с таймаутом 30 секунд
+          response_code=$(curl -s \
+            -o /dev/null \
+            -w "%{http_code}" \
+            --max-time 30 \
+            "https://tg-birthday-bot.onrender.com/health")
+          
+          echo "📊 Код ответа: $response_code"
+          
+          if [ "$response_code" = "200" ]; then
+            echo "🎉 Успех! Render проснулся после $attempt попытки"
+            echo "⏰ Время успеха: $(date)"
+            exit 0
+          else
+            echo "💤 Render еще спит, ждем 15 секунд..."
+            sleep 15
+          fi
+        done
+        
+        echo "❌ Не удалось разбудить Render после 6 попыток"
+        echo "⏰ Время окончания: $(date)"
+        exit 1
