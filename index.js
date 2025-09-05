@@ -10,7 +10,7 @@ const config = {
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseKey: process.env.SUPABASE_KEY,
   timezone: process.env.TIMEZONE || 'Europe/Moscow',
-  botUsername: process.env.BOT_USERNAME || 'lkworm_bot'
+  botUsername: process.env.BOT_USERNAME || 'birthdayotaky_bot'
 };
 
 // Переменная для отслеживания последней проверки
@@ -369,3 +369,4 @@ start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
 });
+
