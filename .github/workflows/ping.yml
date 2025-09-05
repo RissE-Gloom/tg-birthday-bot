@@ -1,41 +1,22 @@
 name: Render Wake-up Service
 on:
   schedule:
-    - cron: '*/14 * * * *'  # Каждые 14 минут (важно!)
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
   wake-render:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
-    - name: Wake up Render with patience
+    - name: Debug - Check what's happening
       run: |
-        echo "🕐 Начинаем будить Render..."
-        echo "⏰ Время начала: $(date)"
+        echo "=== DEBUG START ==="
+        echo "Current time: $(date)"
+        echo "Working directory: $(pwd)"
+        echo "=== TRY CURL ==="
         
-        # УВЕЛИЧИМ количество попыток и уменьшим интервал
-        for attempt in {1..10}; do
-          echo "🔔 Попытка $attempt из 10..."
-          
-          response_code=$(curl -s \
-            -o /dev/null \
-            -w "%{http_code}" \
-            --max-time 30 \
-            "https://tg-birthday-bot.onrender.com/health")
-          
-          echo "📊 Код ответа: $response_code"
-          
-          if [ "$response_code" = "200" ]; then
-            echo "🎉 Успех! Render проснулся после $attempt попытки"
-            echo "⏰ Время успеха: $(date)"
-            exit 0
-          else
-            echo "💤 Render еще спит, ждем 10 секунд..."
-            sleep 10  # Уменьшили интервал
-          fi
-        done
+        # Простейший запрос без сложной логики
+        curl_result=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://tg-birthday-bot.onrender.com/health" 2>&1)
+        echo "Curl result: $curl_result"
         
-        echo "❌ Не удалось разбудить Render после 10 попыток"
-        echo "⏰ Время окончания: $(date)"
-        exit 1
+        echo "=== DEBUG END ==="
