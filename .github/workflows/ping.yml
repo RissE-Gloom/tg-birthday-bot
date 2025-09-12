@@ -16,7 +16,7 @@ jobs:
         echo "=== TRY CURL ==="
         
         # Простейший запрос без сложной логики
-        curl_result=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://tg-birthday-bot.onrender.com/health" 2>&1)
+        curl_result=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://tg-birthday-bot-peiv.onrender.com/health" 2>&1)
         echo "Curl result: $curl_result"
         
         echo "=== DEBUG END ==="
