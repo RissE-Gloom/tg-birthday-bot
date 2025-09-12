@@ -11,7 +11,7 @@ jobs:
     - name: Simple ping test
       run: |
         echo "🚀 Testing connection at $(date)"
-        curl -s -o /dev/null -w "Status: %{http_code}\n" --max-time 30 "https://tg-birthday-bot.onrender.com/health"
+        curl -s -o /dev/null -w "Status: %{http_code}\n" --max-time 30 "https://tg-birthday-bot-peiv.onrender.com/health"
         echo "✅ Done at $(date)"
         
         echo "❌ Не удалось разбудить Render после 6 попыток"
