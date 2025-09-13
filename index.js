@@ -152,7 +152,13 @@ const dbService = {
   }
 };
 
-// 🔥 ЗАМЕНА: Inline Keyboard вместо обычной
+// Обработка упоминания @birthdayotaky_bot /start в чатах
+bot.hears(new RegExp(`@${config.botUsername}\\s+/start`), async (ctx) => {
+  await checkTableStructure();
+  return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
+});
+
+// ЗАМЕНА: Inline Keyboard вместо обычной
 function getMainMenu() {
   return Markup.inlineKeyboard([
     [
@@ -369,4 +375,5 @@ start().catch(err => {
   console.error('Ошибка запуска:', err);
   process.exit(1);
 });
+
 
