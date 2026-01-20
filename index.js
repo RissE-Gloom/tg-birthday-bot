@@ -13,21 +13,21 @@ const config = {
 
 // Инициализация Firebase
 let serviceAccount;
-const creds = process.env.FIREBASE_KEY_BASE64;
+const rawCreds = process.env.FIREBASE_KEY_BASE64;
 
 try {
-  if (creds) {
-    const trimmedCreds = creds.trim();
-    if (trimmedCreds.startsWith('{')) {
-      // Если это просто JSON (не зашифрованный в base64)
-      serviceAccount = JSON.parse(trimmedCreds);
+  if (rawCreds) {
+    // 🔥 ОЧИСТКА: Удаляем BOM и любые невидимые символы, которые добавляет Windows
+    let creds = rawCreds.trim().replace(/^\ufeff/g, '');
+
+    if (creds.startsWith('{')) {
+      serviceAccount = JSON.parse(creds);
     } else {
-      // Иначе пробуем декодировать как base64
-      const decodedKey = Buffer.from(trimmedCreds, 'base64').toString('utf8');
-      serviceAccount = JSON.parse(decodedKey);
+      // Пытаемся декодировать как base64 и тоже чистим результат
+      const decoded = Buffer.from(creds, 'base64').toString('utf8').replace(/^\ufeff/g, '');
+      serviceAccount = JSON.parse(decoded);
     }
   } else {
-    // Для локальной разработки: читаем из файла
     try {
       serviceAccount = require('./service-account.json');
     } catch (e) {
@@ -41,11 +41,15 @@ try {
       databaseURL: config.firebaseDbUrl
     });
     console.log('✅ Firebase успешно инициализирован');
+  } else {
+    throw new Error('Данные для авторизации Firebase не найдены');
   }
 } catch (error) {
-  console.error('❌ Критическая ошибка инициализации Firebase:', error.message);
-  console.log('ℹ️ Проверьте формат ключа в переменной FIREBASE_KEY_BASE64');
+  console.error('❌ КРИТИЧЕСКАЯ ОШИБКА ИНИЦИАЛИЗАЦИИ:', error.message);
+  console.log('ℹ️ Попробуйте вставить в Render ЧИСТЫЙ текст из JSON-файла (без кодирования)');
+  process.exit(1); // Останавливаем бота, чтобы не спамить ошибками
 }
+
 
 
 const db = admin.database();
