@@ -1,81 +1,247 @@
-const { Telegraf } = require('telegraf');
-const { Low } = require('lowdb');
-const { JSONFile } = require('lowdb/node');
-const { scheduleJob } = require('node-schedule');
+require('dotenv').config();
+const { Telegraf, Markup } = require('telegraf');
+const admin = require('firebase-admin');
 const { DateTime } = require('luxon');
 
-// Инициализация базы данных
-const adapter = new JSONFile('db.json');
-const db = new Low(adapter, { users: [] });
+// Конфигурация
+const config = {
+  botToken: process.env.TELEGRAM_BOT_TOKEN,
+  firebaseDbUrl: process.env.FIREBASE_DB_URL,
+  timezone: process.env.TIMEZONE || 'Europe/Moscow',
+  botUsername: 'lkworm_bot'
+};
 
-const bot = new Telegraf('476971889:AAHqIoP0f3hTF7K79JD4_VON8to_awhu9_g');
-
-// Настройка временной зоны (Москва)
-const TIMEZONE = 'Europe/Moscow';
-
-// Функция проверки дней рождения
-async function checkBirthdays() {
-  const now = DateTime.now().setZone(TIMEZONE);
-  const today = now.toFormat('dd.MM');
-
-  await db.read();
-  
-  db.data.users.forEach(user => {
-    if (user.birthDate === today) {
-      bot.telegram.sendMessage(
-        user.id,
-        `🎉 ${user.name}, сегодня твой день! 🎂\nДата рождения: ${user.birthDate}`
-      );
+// Инициализация Firebase
+let serviceAccount;
+try {
+  if (process.env.FIREBASE_KEY_BASE64) {
+    // Для Render: читаем ключ из переменной окружения в base64
+    const decodedKey = Buffer.from(process.env.FIREBASE_KEY_BASE64, 'base64').toString('utf8');
+    serviceAccount = JSON.parse(decodedKey);
+  } else {
+    // Для локальной разработки: читаем из файла
+    try {
+      serviceAccount = require('./service-account.json');
+    } catch (e) {
+      console.log('⚠️ Файл service-account.json не найден. Бот не сможет подключиться к БД без него или FIREBASE_KEY_BASE64.');
     }
-  });
+  }
+
+  if (serviceAccount) {
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      databaseURL: config.firebaseDbUrl
+    });
+    console.log('✅ Firebase успешно инициализирован');
+  }
+} catch (error) {
+  console.error('❌ Ошибка инициализации Firebase:', error.message);
 }
 
-// Обработчик команды /start
+const db = admin.database();
+const bot = new Telegraf(config.botToken);
+
+// Утилиты для работы с датами
+const dateUtils = {
+  normalizeDate: (input) => {
+    const cleaned = input.replace(/\D/g, '');
+    if (cleaned.length === 3) {
+      return `${cleaned[0].padStart(2, '0')}.${cleaned.slice(1).padStart(2, '0')}`;
+    }
+    if (cleaned.length === 4) {
+      return `${cleaned.slice(0, 2)}.${cleaned.slice(2).padStart(2, '0')}`;
+    }
+    return null;
+  },
+  
+  isValidDate: (dateStr) => {
+    if (!dateStr) return false;
+    const [day, month] = dateStr.split('.').map(Number);
+    if (month < 1 || month > 12) return false;
+    if (day < 1 || day > 31) return false;
+    
+    const months30 = [4, 6, 9, 11];
+    if (months30.includes(month) && day > 30) return false;
+    if (month === 2 && day > 29) return false;
+    
+    return true;
+  }
+};
+
+// Сервис работы с базой данных (Firebase Realtime Database)
+const dbService = {
+  upsertUser: async (userId, chatId, username, birthDate) => {
+    const userRef = db.ref(`chats/${chatId}/${userId}`);
+    await userRef.set({
+      username: username || null,
+      birth_date: birthDate,
+      updated_at: admin.database.ServerValue.TIMESTAMP
+    });
+  },
+
+  getUsersByChat: async (chatId) => {
+    const snapshot = await db.ref(`chats/${chatId}`).once('value');
+    const data = snapshot.val();
+    if (!data) return [];
+    
+    return Object.entries(data).map(([userId, info]) => ({
+      user_id: userId,
+      ...info
+    }));
+  }
+};
+
+// Меню бота
+function getMainMenu() {
+  return Markup.keyboard([
+    ['📅 Добавить дату', '👀 Список дней рождений'],
+    ['ℹ️ Помощь']
+  ])
+  .resize()
+  .oneTime();
+}
+
+// Проверка, содержит ли текст упоминание бота
+function isBotMention(text) {
+  return text.includes(`@${config.botUsername}`);
+}
+
+// Обработчики команд
 bot.start((ctx) => {
-  ctx.reply('Привет! Отправь дату рождения в формате ДД.ММ (например, 31.12)');
+  return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
 });
 
-// Обработчик текстовых сообщений
-bot.on('text', async (ctx) => {
+bot.hears('📅 Добавить дату', (ctx) => {
+  return ctx.reply(
+    `Отправьте дату в формате ДД.ММ, например:\n\n@${config.botUsername} 15.09`,
+    Markup.removeKeyboard()
+  );
+});
+
+bot.hears('👀 Список дней рождений', async (ctx) => {
   try {
-    const userId = ctx.from.id;
-    const userName = ctx.from.first_name || 'Пользователь';
-    const birthDate = ctx.message.text.trim();
-
-    // Проверка формата даты
-    if (!/^\d{2}\.\d{2}$/.test(birthDate)) {
-      return ctx.reply('❌ Неверный формат! Используй ДД.ММ (например, 31.12)');
+    const users = await dbService.getUsersByChat(ctx.chat.id);
+    if (users.length === 0) {
+      return ctx.reply('В этом чате пока нет сохраненных дат', getMainMenu());
     }
-
-    // Сохранение данных
-    await db.read();
     
-    const userIndex = db.data.users.findIndex(u => u.id === userId);
-    if (userIndex >= 0) {
-      db.data.users[userIndex].birthDate = birthDate;
-    } else {
-      db.data.users.push({ id: userId, name: userName, birthDate });
-    }
-
-    await db.write();
-    ctx.reply(`✅ Дата ${birthDate} сохранена! Уведомлю, когда наступит этот день!`);
+    const list = users.map(u => `• ${u.username ? '@' + u.username : 'Пользователь'}: ${u.birth_date}`).join('\n');
+    return ctx.reply(`🎂 Дни рождения:\n${list}`, getMainMenu());
   } catch (error) {
     console.error('Ошибка:', error);
-    ctx.reply('❌ Ошибка при сохранении данных.');
+    return ctx.reply('❌ Ошибка при получении списка', getMainMenu());
   }
 });
 
-// Планировщик (проверка каждый день в 09:00 по Москве)
-scheduleJob('0 9 * * *', () => {
-  console.log('Проверяем дни рождения...');
-  checkBirthdays();
+bot.hears('ℹ️ Помощь', (ctx) => {
+  return ctx.replyWithMarkdown(
+    `*Как пользоваться ботом:*
+1. Нажмите *"📅 Добавить дату"*
+2. Отправьте \`@${config.botUsername} ДД.ММ\`
+3. Используйте *"👀 Список дней рождений"* для просмотра
+
+*Пример:*
+\`@${config.botUsername} 15.09\` - сохранит дату 15 сентября`,
+    getMainMenu()
+  );
 });
 
+bot.on('text', async (ctx) => {
+  const text = ctx.message.text.trim();
+  if (!isBotMention(text)) return;
+  
+  const cleanText = text.replace(`@${config.botUsername}`, '').trim();
+  
+  if (cleanText.startsWith('/start')) {
+    return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
+  }
+  
+  try {
+    const normalizedDate = dateUtils.normalizeDate(cleanText);
+    
+    if (!normalizedDate || !dateUtils.isValidDate(normalizedDate)) {
+      return ctx.reply('❌ Неверный формат! Используйте ДД.ММ. Пример:\n\n`@' + config.botUsername + ' 15.09`');
+    }
+
+    const username = ctx.from.username || null;
+    await dbService.upsertUser(
+      ctx.from.id,
+      ctx.chat.id,
+      username,
+      normalizedDate
+    );
+    
+    const replyText = username 
+      ? `✅ Дата "${normalizedDate}" для @${username} сохранена!`
+      : `✅ Дата "${normalizedDate}" сохранена!`;
+    
+    return ctx.reply(replyText, getMainMenu());
+  } catch (error) {
+    console.error('Ошибка:', error);
+    return ctx.reply('❌ Ошибка при сохранении данных', getMainMenu());
+  }
+});
+
+// Проверка дней рождений
+async function checkBirthdays() {
+  const now = DateTime.now().setZone(config.timezone);
+  const today = now.toFormat('dd.MM');
+  const in7Days = now.plus({ days: 7 }).toFormat('dd.MM');
+
+  try {
+    const snapshot = await db.ref('chats').once('value');
+    const allChats = snapshot.val();
+    if (!allChats) return;
+
+    for (const chatId in allChats) {
+      const users = allChats[chatId];
+      const todayCelebrations = [];
+      const upcomingCelebrations = [];
+
+      for (const userId in users) {
+        const user = users[userId];
+        if (user.birth_date === today) {
+          todayCelebrations.push(user.username ? `@${user.username}` : `пользователя ${userId}`);
+        } else if (user.birth_date === in7Days) {
+          upcomingCelebrations.push(user.username ? `@${user.username}` : `пользователя ${userId}`);
+        }
+      }
+
+      if (todayCelebrations.length > 0) {
+        await bot.telegram.sendMessage(chatId, `🎉 Сегодня день рождения у ${todayCelebrations.join(', ')}! Поздравляем! 🎂`);
+      }
+
+      if (upcomingCelebrations.length > 0) {
+        await bot.telegram.sendMessage(chatId, `⏳ Через неделю (${in7Days}) день рождения у ${upcomingCelebrations.join(', ')}! Не забудьте поздравить!`);
+      }
+    }
+  } catch (error) {
+    console.error('Ошибка проверки дней рождений:', error);
+  }
+}
+
 // Запуск бота
-bot.launch()
-  .then(() => {
-    console.log('Бот запущен!');
-    // Первая проверка при старте
-    checkBirthdays(); 
-  })
-  .catch(err => console.error('Ошибка запуска:', err));
+async function start() {
+  // Проверка при старте и каждые 24 часа
+  if (admin.apps.length > 0) {
+    await checkBirthdays();
+    setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
+  }
+
+  bot.launch();
+  console.log('🚀 Бот успешно запущен');
+}
+
+bot.catch((err, ctx) => {
+  console.error('Ошибка бота:', err);
+  ctx.reply('⚠️ Произошла ошибка. Попробуйте позже', getMainMenu());
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('Необработанная ошибка:', err);
+});
+
+start().catch(err => {
+  console.error('Критическая ошибка запуска:', err);
+  process.exit(1);
+});
