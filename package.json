@@ -1,7 +1,7 @@
 {
   "name": "tg-birthday-bot",
   "version": "1.0.0",
-  "description": "Telegram birthday bot with Supabase",
+  "description": "Telegram birthday bot with Firebase",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "telegraf": "^4.16.3",
-    "@supabase/supabase-js": "^2.38.0",
+    "firebase-admin": "^12.0.0",
     "luxon": "^3.4.4",
     "dotenv": "^16.3.1"
   },
@@ -23,7 +23,7 @@
     "telegram",
     "bot",
     "birthday",
-    "supabase"
+    "firebase"
   ],
   "author": "RissE",
   "license": "MIT"

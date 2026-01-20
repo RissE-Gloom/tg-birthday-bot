@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: telegram-birthday-bot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        fromSecret: TELEGRAM_BOT_TOKEN
+      - key: SUPABASE_URL
+        fromSecret: SUPABASE_URL
+      - key: SUPABASE_KEY
+        fromSecret: SUPABASE_KEY
+      - key: TIMEZONE
+        value: Europe/Moscow

@@ -1,0 +1,22 @@
+name: Render Wake-up Service
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  wake-render:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Debug - Check what's happening
+      run: |
+        echo "=== DEBUG START ==="
+        echo "Current time: $(date)"
+        echo "Working directory: $(pwd)"
+        echo "=== TRY CURL ==="
+        
+        # Простейший запрос без сложной логики
+        curl_result=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://tg-birthday-bot-peiv.onrender.com/health" 2>&1)
+        echo "Curl result: $curl_result"
+        
+        echo "=== DEBUG END ==="

@@ -1,0 +1,19 @@
+name: Render Wake-up Service
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  wake-render:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Simple ping test
+      run: |
+        echo "🚀 Testing connection at $(date)"
+        curl -s -o /dev/null -w "Status: %{http_code}\n" --max-time 30 "https://tg-birthday-bot-peiv.onrender.com/health"
+        echo "✅ Done at $(date)"
+        
+        echo "❌ Не удалось разбудить Render после 6 попыток"
+        echo "⏰ Время окончания: $(date)"
+        exit 1

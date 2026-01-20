@@ -23,7 +23,7 @@ try {
     try {
       serviceAccount = require('./service-account.json');
     } catch (e) {
-      console.log('⚠️ Файл service-account.json не найден. Бот не сможет подключиться к БД без него или FIREBASE_KEY_BASE64.');
+      console.log('⚠️ Файл service-account.json не найден. Бот не сможет подключиться к БД без него или FIREBASE_KEY_BASE64 в .env.');
     }
   }
 
@@ -51,19 +51,22 @@ const dateUtils = {
     if (cleaned.length === 4) {
       return `${cleaned.slice(0, 2)}.${cleaned.slice(2).padStart(2, '0')}`;
     }
+    if (cleaned.length === 2) {
+      return `${cleaned.padStart(2, '0')}.01`;
+    }
     return null;
   },
-  
+
   isValidDate: (dateStr) => {
     if (!dateStr) return false;
     const [day, month] = dateStr.split('.').map(Number);
     if (month < 1 || month > 12) return false;
     if (day < 1 || day > 31) return false;
-    
+
     const months30 = [4, 6, 9, 11];
     if (months30.includes(month) && day > 30) return false;
     if (month === 2 && day > 29) return false;
-    
+
     return true;
   }
 };
@@ -83,7 +86,7 @@ const dbService = {
     const snapshot = await db.ref(`chats/${chatId}`).once('value');
     const data = snapshot.val();
     if (!data) return [];
-    
+
     return Object.entries(data).map(([userId, info]) => ({
       user_id: userId,
       ...info
@@ -97,8 +100,8 @@ function getMainMenu() {
     ['📅 Добавить дату', '👀 Список дней рождений'],
     ['ℹ️ Помощь']
   ])
-  .resize()
-  .oneTime();
+    .resize()
+    .oneTime();
 }
 
 // Проверка, содержит ли текст упоминание бота
@@ -124,7 +127,7 @@ bot.hears('👀 Список дней рождений', async (ctx) => {
     if (users.length === 0) {
       return ctx.reply('В этом чате пока нет сохраненных дат', getMainMenu());
     }
-    
+
     const list = users.map(u => `• ${u.username ? '@' + u.username : 'Пользователь'}: ${u.birth_date}`).join('\n');
     return ctx.reply(`🎂 Дни рождения:\n${list}`, getMainMenu());
   } catch (error) {
@@ -141,7 +144,10 @@ bot.hears('ℹ️ Помощь', (ctx) => {
 3. Используйте *"👀 Список дней рождений"* для просмотра
 
 *Пример:*
-\`@${config.botUsername} 15.09\` - сохранит дату 15 сентября`,
+\`@${config.botUsername} 15.09\` - сохранит дату 15 сентября.
+
+Важно! Если вы указали в лс бота свой день рождения, то бот поздравит именно через лс.
+Если в чате добавляли день рождения, то поздравит в чате.`,
     getMainMenu()
   );
 });
@@ -149,18 +155,21 @@ bot.hears('ℹ️ Помощь', (ctx) => {
 bot.on('text', async (ctx) => {
   const text = ctx.message.text.trim();
   if (!isBotMention(text)) return;
-  
+
   const cleanText = text.replace(`@${config.botUsername}`, '').trim();
-  
+
   if (cleanText.startsWith('/start')) {
     return ctx.reply('Добро пожаловать! Используйте кнопки меню:', getMainMenu());
   }
-  
+
   try {
     const normalizedDate = dateUtils.normalizeDate(cleanText);
-    
+
     if (!normalizedDate || !dateUtils.isValidDate(normalizedDate)) {
-      return ctx.reply('❌ Неверный формат! Используйте ДД.ММ. Пример:\n\n`@' + config.botUsername + ' 15.09`');
+      return ctx.reply(
+        '❌ Неверный формат! Используйте ДД.ММ. Пример:\n\n`@' + config.botUsername + ' 15.09`',
+        getMainMenu()
+      );
     }
 
     const username = ctx.from.username || null;
@@ -170,11 +179,11 @@ bot.on('text', async (ctx) => {
       username,
       normalizedDate
     );
-    
-    const replyText = username 
+
+    const replyText = username
       ? `✅ Дата "${normalizedDate}" для @${username} сохранена!`
       : `✅ Дата "${normalizedDate}" сохранена!`;
-    
+
     return ctx.reply(replyText, getMainMenu());
   } catch (error) {
     console.error('Ошибка:', error);
