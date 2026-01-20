@@ -13,17 +13,25 @@ const config = {
 
 // Инициализация Firebase
 let serviceAccount;
+const creds = process.env.FIREBASE_KEY_BASE64;
+
 try {
-  if (process.env.FIREBASE_KEY_BASE64) {
-    // Для Render: читаем ключ из переменной окружения в base64
-    const decodedKey = Buffer.from(process.env.FIREBASE_KEY_BASE64, 'base64').toString('utf8');
-    serviceAccount = JSON.parse(decodedKey);
+  if (creds) {
+    const trimmedCreds = creds.trim();
+    if (trimmedCreds.startsWith('{')) {
+      // Если это просто JSON (не зашифрованный в base64)
+      serviceAccount = JSON.parse(trimmedCreds);
+    } else {
+      // Иначе пробуем декодировать как base64
+      const decodedKey = Buffer.from(trimmedCreds, 'base64').toString('utf8');
+      serviceAccount = JSON.parse(decodedKey);
+    }
   } else {
     // Для локальной разработки: читаем из файла
     try {
       serviceAccount = require('./service-account.json');
     } catch (e) {
-      console.log('⚠️ Файл service-account.json не найден. Бот не сможет подключиться к БД без него или FIREBASE_KEY_BASE64 в .env.');
+      console.log('⚠️ Файл service-account.json не найден и переменная FIREBASE_KEY_BASE64 пуста.');
     }
   }
 
@@ -35,8 +43,10 @@ try {
     console.log('✅ Firebase успешно инициализирован');
   }
 } catch (error) {
-  console.error('❌ Ошибка инициализации Firebase:', error.message);
+  console.error('❌ Критическая ошибка инициализации Firebase:', error.message);
+  console.log('ℹ️ Проверьте формат ключа в переменной FIREBASE_KEY_BASE64');
 }
+
 
 const db = admin.database();
 const bot = new Telegraf(config.botToken);
