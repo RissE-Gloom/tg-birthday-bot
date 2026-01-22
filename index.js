@@ -144,14 +144,40 @@ const dbService = {
       const data = snapshot.val();
       if (!data) return [];
 
-      // Конвертируем объект {userId: {data}} в массив [{data}]
-      return Object.values(data);
+      // Конвертируем объект в массив и сортируем по времени обновления или ID для стабильности номера
+      return Object.values(data).sort((a, b) => {
+        return (a.user_id || 0).toString().localeCompare((b.user_id || 0).toString());
+      });
     } catch (error) {
       console.error('Ошибка в getUsersByChat:', error);
       throw error;
     }
   }
 };
+
+// Хелпер для поиска профиля
+async function handleProfileSearch(ctx, num) {
+  try {
+    const users = await dbService.getUsersByChat(ctx.chat.id);
+    if (num > 0 && num <= users.length) {
+      const user = users[num - 1];
+
+      // Экранируем спецсимволы в нике для Markdown
+      const safeUsername = user.username ? user.username.replace(/[_*`[\]()]/g, '\\$&') : null;
+
+      const mention = safeUsername
+        ? `@${safeUsername}`
+        : `пользователь [профиль](tg://user?id=${user.user_id})`;
+
+      return ctx.replyWithMarkdown(`👤 Профиль #${num}:\n${mention}`, getMainMenu());
+    } else {
+      return ctx.reply(`❌ Пользователь под номером ${num} не найден. В списке всего ${users.length} чел.`);
+    }
+  } catch (error) {
+    console.error('Ошибка в handleProfileSearch:', error);
+    return ctx.reply('❌ Ошибка при поиске профиля');
+  }
+}
 
 // Обработка упоминания @bot /start в чатах
 bot.hears(new RegExp(`@${config.botUsername}\\s+/start`), async (ctx) => {
@@ -245,17 +271,16 @@ bot.action('show_help', (ctx) => {
   );
 });
 
-// 🔥 ОПТИМИЗАЦИЯ: Отдельный обработчик для упоминаний с датами
-bot.hears(new RegExp(`@${config.botUsername}\\s+[0-9.,]+`), async (ctx) => {
-  const text = ctx.message.text.trim();
-  const cleanText = text.replace(`@${config.botUsername}`, '').trim();
+// 🔥 ОПТИМИЗАЦИЯ: Отдельный обработчик для упоминаний с датами (ищем формат ДД.ММ)
+bot.hears(new RegExp(`@${config.botUsername}\\s+(\\d{1,2}[.\\/\\-]\\d{1,2})`), async (ctx) => {
+  const text = ctx.match[1]; // Берем именно дату из захваченной группы
 
   try {
-    const normalizedDate = dateUtils.normalizeDate(cleanText);
+    const normalizedDate = dateUtils.normalizeDate(text);
 
     if (!normalizedDate || !dateUtils.isValidDate(normalizedDate)) {
       return ctx.reply(
-        '❌ Неверный формат! Используйте ДД.ММ. Пример:\n\n`@' + config.botUsername + ' 15.09`',
+        '❌ Неверный формат даты! Используйте ДД.ММ. Пример:\n\n`@' + config.botUsername + ' 15.09`',
         getMainMenu()
       );
     }
@@ -277,6 +302,12 @@ bot.hears(new RegExp(`@${config.botUsername}\\s+[0-9.,]+`), async (ctx) => {
     console.error('Ошибка:', error);
     return ctx.reply('❌ Ошибка при сохранении данных', getMainMenu());
   }
+});
+
+// Обработчик для поиска профиля по номеру (поддерживает упоминание @bot номер)
+bot.hears(new RegExp(`@${config.botUsername}\\s+(\\d+)`), async (ctx) => {
+  const num = parseInt(ctx.match[1], 10);
+  return handleProfileSearch(ctx, num);
 });
 
 // 🔥 ОПТИМИЗАЦИЯ: Упрощенный обработчик текста (обработка чисел и команд)
