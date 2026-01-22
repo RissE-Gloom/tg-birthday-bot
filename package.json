@@ -1,7 +1,7 @@
 {
   "name": "tg-birthday-bot",
   "version": "1.0.0",
-  "description": "Telegram birthday bot with Firebase",
+  "description": "Telegram birthday bot with Firebase Realtime Database",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "telegraf": "^4.16.3",
-    "firebase-admin": "^12.0.0",
+    "firebase-admin": "^11.11.1",
     "luxon": "^3.4.4",
     "dotenv": "^16.3.1"
   },
