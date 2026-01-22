@@ -246,7 +246,7 @@ bot.action('view_birthdays', async (ctx) => {
 
 bot.action('ask_profile_num', (ctx) => {
   ctx.answerCbQuery();
-  return ctx.reply('Введите номер пользователя из списка, чтобы получить ссылку на его профиль:');
+  return ctx.reply('Напишите тег бота и введите номер пользователя из списка, чтобы получить ссылку на его профиль. Пример: @birthdayotaky_bot 1');
 });
 
 bot.action('back_to_menu', (ctx) => {
