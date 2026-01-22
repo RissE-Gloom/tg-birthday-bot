@@ -203,12 +203,29 @@ bot.action('view_birthdays', async (ctx) => {
       return ctx.reply('В этом чате пока нет сохраненных дат', getMainMenu());
     }
 
-    const list = users.map(u => `• ${u.username ? '@' + u.username : 'Пользователь'}: ${u.birth_date}`).join('\n');
-    return ctx.reply(`🎂 Дни рождения:\n${list}`, getMainMenu());
+    // Собираем нумерованный список без @
+    const list = users.map((u, index) => `${index + 1}. ${u.username || 'Пользователь'} — ${u.birth_date}`).join('\n');
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔍 Узнать профиль', 'ask_profile_num')],
+      [Markup.button.callback('⬅️ В меню', 'back_to_menu')]
+    ]);
+
+    return ctx.reply(`🎂 Дни рождения:\n${list}`, keyboard);
   } catch (error) {
     console.error('Ошибка:', error);
     return ctx.reply('❌ Ошибка при получении списка', getMainMenu());
   }
+});
+
+bot.action('ask_profile_num', (ctx) => {
+  ctx.answerCbQuery();
+  return ctx.reply('Введите номер пользователя из списка, чтобы получить ссылку на его профиль:');
+});
+
+bot.action('back_to_menu', (ctx) => {
+  ctx.answerCbQuery();
+  return ctx.reply('Главное меню:', getMainMenu());
 });
 
 bot.action('show_help', (ctx) => {
@@ -262,11 +279,31 @@ bot.hears(new RegExp(`@${config.botUsername}\\s+[0-9.,]+`), async (ctx) => {
   }
 });
 
-// 🔥 ОПТИМИЗАЦИЯ: Упрощенный обработчик текста (только для команд)
+// 🔥 ОПТИМИЗАЦИЯ: Упрощенный обработчик текста (обработка чисел и команд)
 bot.on('text', async (ctx) => {
-  // Теперь здесь обрабатываются только текстовые сообщения без упоминаний
-  // Упоминания обрабатываются отдельным обработчиком выше
-  console.log('Получено текстовое сообщение:', ctx.message.text);
+  const text = ctx.message.text.trim();
+
+  // Если введено число — ищем профиль из списка
+  if (/^\d+$/.test(text)) {
+    const num = parseInt(text, 10);
+    try {
+      const users = await dbService.getUsersByChat(ctx.chat.id);
+      if (num > 0 && num <= users.length) {
+        const user = users[num - 1];
+        const mention = user.username
+          ? `@${user.username}`
+          : `пользователь [link](tg://user?id=${user.user_id})`;
+
+        return ctx.replyWithMarkdown(`👤 Профиль #${num}:\n${mention}`, getMainMenu());
+      }
+    } catch (error) {
+      console.error('Ошибка при поиске профиля:', error);
+    }
+  }
+
+  // Упоминания бота с датами обрабатываются выше через bot.hears(RegExp)
+  // Здесь можно логировать или игнорировать остальные сообщения
+  console.log('Получено сообщение:', text);
 });
 
 // Проверка дней рождений с обработкой ошибок
